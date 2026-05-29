@@ -62,7 +62,7 @@ public record InstanceLockOptions
 /// The number of retry attempts.
 /// </param>
 /// <param name="Delay">
-/// The delay after each retry attempt.
+/// The maximum delay duration between retry attempts.<br/>The actual wait time before each retry is randomized (jittered) uniformly between <see cref="TimeSpan.Zero"/> and this maximum value to avoid synchronized retry waves.
 /// </param>
 /// <param name="ConnectionTimeout">
 /// The connection timeout for connecting to the primary instance's IPC server.
@@ -78,7 +78,7 @@ public record NotifyInstanceRetryPolicy(int Attempts, TimeSpan Delay, TimeSpan C
 /// (This, of course, only applies if a restart is not being attempted.)
 /// </param>
 /// <param name="InitialDelay">The initial time to wait before attempting to restart the server again after the first attempt. Every following attempt will delay by double the amount delayed the previous attempt. (the first attempt will always happen instantly.)</param>
-/// <param name="MaxDelay">The maximum retry delay. The server will continue to be restarted while the current delay (the time to wait before attempting to restart again) is less than or equal to this value. After each failed attempt, the delay is doubled until it reaches this limit.</param>
+/// <param name="MaxDelay">The maximum backoff delay threshold. If the calculated backoff delay (which doubles after each failed restart attempt) exceeds this value, the server loop will terminate permanently rather than continuing to retry.</param>
 public record InstanceServerRetryPolicy(TimeSpan MinimumUptime, TimeSpan InitialDelay, TimeSpan MaxDelay)
 {
     public static readonly InstanceServerRetryPolicy DontRetry = new(Timeout.InfiniteTimeSpan, default, default);
@@ -110,13 +110,18 @@ public sealed class InstanceLock<TMessage> : IDisposable
     private readonly ILogger<InstanceLock<TMessage>>? _logger;
     private readonly InstanceLockImpl<TMessage> _backend;
 
-    private readonly Func<TMessage>? _createNotificationMessage;
+    private readonly Func<TMessage>? _getMessageToPrimary;
     private readonly Func<TMessage, ValueTask>? _onOtherInstanceOpened;
     private readonly Func<Exception, bool>? _onServerException;
 
-    /// <param name="appId">A globally unique ID for the application. This can be the ID of your application's package, or a GUID, or a mix of both.</param>
-    /// <param name="createNotificationMessage">
-    /// A factory that creates the message to be sent to the primary instance. This is only invoked in other instances when they are opened.<br/>See summary of <see cref="TryAcquireOrNotify"/> for more details.
+    private Task? _pipeServerLoopTask;
+
+    /// <param name="appId">
+    /// <para>A globally unique ID for the application. This can be the ID of your application's package, or a GUID, or a mix of both. The ID must only consist alphanumeric characters, '-', and '_'; Invalid characters will be sanitized.</para>
+    /// <para>If <see langword="null"/>, an ID will be generated automatically.</para>
+    /// </param>
+    /// <param name="getMessageToPrimary">
+    /// Gets the message that will be sent to the primary instance if acquiring the instance lock failed (meaning this is not the primary instance).<br/>See summary of <see cref="TryAcquireOrNotify"/> for more details.
     /// </param>
     /// <param name="onOtherInstanceOpened">
     /// A call back that is invoked in the primary instance when another instance is attempted to be opened.<br/>See summary of <see cref="TryAcquireOrNotify"/> for more details.
@@ -130,27 +135,32 @@ public sealed class InstanceLock<TMessage> : IDisposable
     /// <param name="loggerFactory">An optional logger factory if logging by the <see cref="InstanceLock{TMessage}"/> is desired.</param>
     /// <param name="options">The configuration options.</param>
     /// <exception cref="ArgumentNullException">
-    /// <para><paramref name="appId"/> is <see langword="null"/>.</para>
-    /// <para>- OR -</para>
-    /// <para>One of the parameters <paramref name="createNotificationMessage"/> and <paramref name="onOtherInstanceOpened"/> is <see langword="null"/> but the other one is not.</para>
+    /// <para>One of the parameters <paramref name="getMessageToPrimary"/> and <paramref name="onOtherInstanceOpened"/> is <see langword="null"/> but the other one is not.</para>
     /// </exception>
     /// <exception cref="ArgumentException">
     /// <paramref name="appId"/> is empty, or consists only of white-space characters.
     /// </exception>
     /// <exception cref="NotSupportedException"></exception>
     /// <exception cref="System.Security.SecurityException"></exception>
-    public InstanceLock(string appId, Func<TMessage>? createNotificationMessage = null, Func<TMessage, ValueTask>? onOtherInstanceOpened = null, Func<Exception, bool>? onServerException = null, ILoggerFactory? loggerFactory = null, InstanceLockOptions? options = null)
+    public InstanceLock(string? appId, Func<TMessage>? getMessageToPrimary = null, Func<TMessage, ValueTask>? onOtherInstanceOpened = null, Func<Exception, bool>? onServerException = null, ILoggerFactory? loggerFactory = null, InstanceLockOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(appId);
-        if (onOtherInstanceOpened is null && createNotificationMessage is not null) throw new ArgumentNullException(nameof(onOtherInstanceOpened), $"{nameof(onOtherInstanceOpened)} is null, but {nameof(createNotificationMessage)} is not null.");
-        if (createNotificationMessage is null && onOtherInstanceOpened is not null) throw new ArgumentNullException(nameof(createNotificationMessage), $"{nameof(createNotificationMessage)} is null, but {nameof(onOtherInstanceOpened)} is not null.");
+        if (onOtherInstanceOpened is null && getMessageToPrimary is not null) throw new ArgumentNullException(nameof(onOtherInstanceOpened), $"{nameof(onOtherInstanceOpened)} is null, but {nameof(getMessageToPrimary)} is not null.");
+        if (getMessageToPrimary is null && onOtherInstanceOpened is not null) throw new ArgumentNullException(nameof(getMessageToPrimary), $"{nameof(getMessageToPrimary)} is null, but {nameof(onOtherInstanceOpened)} is not null.");
 
-        _createNotificationMessage = createNotificationMessage;
+        _getMessageToPrimary = getMessageToPrimary;
         _onOtherInstanceOpened = onOtherInstanceOpened;
         _onServerException = onServerException;
 
-        _appId = appId.Sanitize();
-        if (string.IsNullOrWhiteSpace(_appId)) throw new ArgumentException($"Invalid sanitized app ID value: '{_appId}'. Unique {nameof(appId)} required", nameof(appId));
+        if (appId is null)
+        {
+            // ExceptionAdjustment: M:System.Guid.ToString(System.String) -T:System.FormatException
+            _appId = Guid.NewGuid().ToString("N");
+        }
+        else
+        {
+            _appId = appId.Sanitize();
+            if (string.IsNullOrWhiteSpace(_appId)) throw new ArgumentException($"Invalid sanitized app ID value: '{_appId}'. Unique {nameof(appId)} required", nameof(appId));
+        }
         _options = options ?? new();
         _logger = loggerFactory?.CreateLogger<InstanceLock<TMessage>>();
         if (OperatingSystem.IsWindows())
@@ -192,12 +202,11 @@ public sealed class InstanceLock<TMessage> : IDisposable
     /// <b>Call this method on app startup as soon as possible.</b>
     /// </para>
     /// </summary>
-    /// <returns><see langword="true"/> if the instance lock for the app was successfully acquired, otherwise <see langword="false"/>.</returns>
     /// <example>
     /// <code language="csharp">
     /// _instanceLock = new InstanceLock&lt;string&gt;(
     ///     "MyOrg.MyApp",
-    ///     createNotificationMessage: () => "ShowMainWindow",
+    ///     getMessageToPrimary: () => "ShowMainWindow",
     ///     onOtherInstanceOpened: async msg => msg == "ShowMainWindow" ? await App.ShowMainWindowAsync() : throw new NotImplementedException(),
     ///     loggerFactory: myLoggerFactory
     /// );
@@ -221,6 +230,7 @@ public sealed class InstanceLock<TMessage> : IDisposable
     /// ]]>
     /// </para>
     /// </remarks>
+    /// <returns><see langword="true"/> if the instance lock for the app was successfully acquired, otherwise <see langword="false"/>.</returns>
     /// <exception cref="OperationCanceledException"></exception>
     /// <exception cref="IOException"></exception>
     /// <exception cref="ObjectDisposedException"></exception>
@@ -229,6 +239,7 @@ public sealed class InstanceLock<TMessage> : IDisposable
     /// <para>If an exception is thrown by the IPC server that listens for notifications from other instances that try to acquire the lock, <c>onServerException</c> (passed in the constructor) will be invoked and then the exception is swallowed.</para>
     /// <para><b>This method is not thread-safe.</b></para>
     /// </remarks>
+    /// <returns><see langword="true"/> if the instance lock for the app was successfully acquired, otherwise <see langword="false"/>.</returns>
     /// <exception cref="OperationCanceledException"></exception>
     /// <exception cref="IOException"></exception>
     /// <exception cref="ObjectDisposedException"></exception>
@@ -245,14 +256,14 @@ public sealed class InstanceLock<TMessage> : IDisposable
         if (isPrimary)
         {
             _logger?.LogInformation("Acquired primary instance lock: appId={AppId}, options={Options}", _appId, _options);
-            if (_onOtherInstanceOpened is not null) _ = _backend.RunServerLoop(_onOtherInstanceOpened, _onServerException, ct);
+            if (_onOtherInstanceOpened is not null && _pipeServerLoopTask is null) _pipeServerLoopTask = _backend.RunServerLoop(_onOtherInstanceOpened, _onServerException, ct);
         }
         else
         {
-            if (notify && _createNotificationMessage is not null)
+            if (notify && _getMessageToPrimary is not null)
             {
                 _logger?.LogInformation("Lock already acquired - another instance is primary; attempting to notify: appId={AppId}, options={Options}", _appId, _options);
-                _backend.NotifyExistingInstance(_createNotificationMessage, ct);
+                _backend.NotifyExistingInstance(_getMessageToPrimary, ct);
             }
             else
             {

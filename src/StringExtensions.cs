@@ -15,15 +15,16 @@ internal static class StringExtensions
     public static string Sanitize(this string s)
     {
         ArgumentNullException.ThrowIfNull(s);
+        if (s.Length == 0) return "";
 
         var sb = new StringBuilder(s.Length);
         var shorten = s.Length >= 254;
         foreach (var c in s)
         {
-            if (char.IsLetterOrDigit(c) || c is '_' or '-') sb.Append(c);
+            if (char.IsAsciiLetterOrDigit(c) || c is '_' or '-') sb.Append(c);
             else if (!shorten) sb.Append('_');
         }
 
-        return sb.Length > 0 ? sb.ToString() : Guid.NewGuid().ToString("N");
+        return sb.ToString();
     }
 }

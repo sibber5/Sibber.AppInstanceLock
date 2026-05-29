@@ -249,6 +249,9 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
             ct = _pipeCts.Token;
         }
 
+        // the best way I could find to do a cancellable synchronous wait (for the delay between retries).
+        // we create the object only if the first attempt fails, because in most cases it probably won't.
+        ManualResetEventSlim? infWaitEvent = null;
         try
         {
 #pragma warning disable Ex0100
@@ -258,10 +261,10 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                 : JsonSerializer.SerializeToUtf8Bytes(createNotificationMessage(), _jsonOptions);
 #pragma warning restore Ex0100
 
-            const int OneMB = 1024 * 1024;
-            if (message.Length > OneMB) throw new ArgumentException($"Notification message is too large. Maximum length is 1MB. Message length is {(double)message.Length / OneMB}MB.", nameof(createNotificationMessage));
+            const int OneMiB = 1024 * 1024;
+            if (message.Length > OneMiB) throw new ArgumentException($"Notification message is too large. Maximum length is 1MiB. Message length is {(double)message.Length / OneMiB}MiB.", nameof(createNotificationMessage));
 
-            var totalAttempts = _options.NotifyInstanceRetryPolicy.Attempts;
+            var totalAttempts = _options.NotifyInstanceRetryPolicy.Attempts + 1;
             for (var attempt = 0; attempt < totalAttempts && !ct.IsCancellationRequested; attempt++) // TODO: maybe dont break (remove the !IsCancellationRequested from the for loop) so that we dont log "failed to notify".
             {
                 var success = NotifyPipe(message, _options.NotifyInstanceRetryPolicy.ConnectionTimeout);
@@ -269,15 +272,19 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
                 try
                 {
-#pragma warning disable CA5394
                     var delay = Random.Shared.NextDouble() * _options.NotifyInstanceRetryPolicy.Delay;
-#pragma warning restore CA5394
-#pragma warning disable Ex0100
-                    Task.Delay(delay, ct).GetAwaiter().GetResult();
-#pragma warning restore Ex0100
+                    infWaitEvent ??= new(false);
+                    // synchronously block here to halt the secondary instance from continuing its startup sequence while we attempt to notify the primary instance.
+                    infWaitEvent.Wait(delay, ct);
                 }
                 catch (OperationCanceledException)
                 {
+                    break;
+                }
+                catch (ObjectDisposedException)
+                {
+                    _logger?.LogWarning(nameof(NotifyExistingInstance) + ": attempted to wait before a retry but '" + nameof(infWaitEvent) + "' was disposed, unexpectedly. assuming the CT was cancelled...");
+                    infWaitEvent = null;
                     break;
                 }
             }
@@ -288,6 +295,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
         {
             var cts = Interlocked.Exchange(ref _pipeCts, null);
             cts?.Dispose();
+            infWaitEvent?.Dispose();
         }
     }
 

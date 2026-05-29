@@ -31,7 +31,7 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         : base(CreatePipeName(appId, options.Scope), options, logger)
     {
         _lockFilePath = ChooseLockFilePath(appId, _options.Scope);
-        _logger?.LogDebug(nameof(UnixInstanceLock<TMessage>) + " initialized: lockFile={Lock} pipe={Pipe}", _lockFilePath, _pipeName);
+        _logger?.LogDebug(nameof(UnixInstanceLock<>) + " initialized: lockFile={Lock} pipe={Pipe}", _lockFilePath, _pipeName);
     }
 
     /// <inheritdoc cref="GetSessionId" path="/exception"/>

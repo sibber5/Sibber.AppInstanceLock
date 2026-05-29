@@ -27,7 +27,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         : base(CreatePipeName(appId, options.Scope), options, logger)
     {
         _mutexName = CreateMutexName(appId, _options.Scope);
-        _logger?.LogDebug(nameof(WindowsInstanceLock<TMessage>) + " initialized: mutex={Mutex} pipe={Pipe}", _mutexName, _pipeName);
+        _logger?.LogDebug(nameof(WindowsInstanceLock<>) + " initialized: mutex={Mutex} pipe={Pipe}", _mutexName, _pipeName);
     }
 
     /// <exception cref="NotSupportedException"><paramref name="scope"/> is not a supported scope.</exception>
@@ -62,7 +62,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         security.AddAccessRule(_options.Scope switch
         {
             InstanceLockScope.Machine => new(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), MutexRights.Synchronize, AccessControlType.Allow),
-            InstanceLockScope.User or InstanceLockScope.Session => new(GetUserId(), MutexRights.Synchronize, AccessControlType.Allow),
+            InstanceLockScope.User or InstanceLockScope.Session => new(WindowsIdentity.GetCurrent().User ?? throw new UnreachableException(), MutexRights.Synchronize, AccessControlType.Allow),
             _ => throw new NotSupportedException(),
         });
         return security;
