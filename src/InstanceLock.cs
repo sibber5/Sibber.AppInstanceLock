@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025-2026 sibber (GitHub: sibber5)
+// Copyright (c) 2025-2026 sibber (GitHub: sibber5)
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -84,19 +84,12 @@ public record InstanceServerRetryPolicy(TimeSpan MinimumUptime, TimeSpan Initial
     public static readonly InstanceServerRetryPolicy DontRetry = new(Timeout.InfiniteTimeSpan, default, default);
 }
 
-#if DOCFX
-/// <remarks>
-/// <![CDATA[
-/// > [!IMPORTANT]
-/// > Acquiring the instance lock must be done on app startup as soon as possible, and only once.
-/// ]]>
-/// </remarks>
-#endif
 /// <summary>
 /// Manages the acquisition of an application instance lock to ensure that only a single instance
 /// of the application is running at a time within a given context (referred to as the primary instance).<br/>
 /// Optionally, it allows sending a message or notifying to the primary instance when another instance is attempted to be opened.
 /// </summary>
+/// <note type="important">Acquiring the instance lock must be done on app startup as soon as possible, and only once.</note>
 /// <typeparam name="TMessage">
 /// The type of the message used for inter-instance notifications when another instance of the application is attempted to be opened.
 /// </typeparam>
@@ -142,6 +135,7 @@ public sealed class InstanceLock<TMessage> : IDisposable
     /// </exception>
     /// <exception cref="NotSupportedException"></exception>
     /// <exception cref="System.Security.SecurityException"></exception>
+    // ExceptionAdjustment: M:System.Guid.ToString(System.String) -T:System.FormatException
     public InstanceLock(string? appId, Func<TMessage>? getMessageToPrimary = null, Func<TMessage, ValueTask>? onOtherInstanceOpened = null, Func<Exception, bool>? onServerException = null, ILoggerFactory? loggerFactory = null, InstanceLockOptions? options = null)
     {
         if (onOtherInstanceOpened is null && getMessageToPrimary is not null) throw new ArgumentNullException(nameof(onOtherInstanceOpened), $"{nameof(onOtherInstanceOpened)} is null, but {nameof(getMessageToPrimary)} is not null.");
@@ -153,7 +147,6 @@ public sealed class InstanceLock<TMessage> : IDisposable
 
         if (appId is null)
         {
-            // ExceptionAdjustment: M:System.Guid.ToString(System.String) -T:System.FormatException
             _appId = Guid.NewGuid().ToString("N");
         }
         else
@@ -220,30 +213,15 @@ public sealed class InstanceLock<TMessage> : IDisposable
     // ExceptionAdjustment: M:System.Threading.Interlocked.Exchange``1(``0@,``0) -T:System.NotSupportedException
     public bool TryAcquireOrNotify(CancellationToken ct = default) => TryAcquireCore(notify: true, ct);
 
-#if DOCFX // TODO: figure out how to do this without having to copy the entire doc comment.
     /// <remarks>
+    /// <para>This method can be called multiple times sequentially. If the lock was already acquired by this instance, subsequent calls are cheap no-ops and immediately return <see langword="true"/>. If the lock was not acquired (another instance is primary), subsequent calls will re-attempt to acquire the lock. When notifying, each failed attempt will invoke the message delegate and send a new message to the primary instance.</para>
     /// <para>If an exception is thrown by the IPC server that listens for notifications from other instances that try to acquire the lock, <c>onServerException</c> (passed in the constructor) will be invoked and then the exception is swallowed.</para>
-    /// <para>
-    /// <![CDATA[
-    /// > [!THREADUNSAFE]
-    /// > TryAcquireOrNotify is not thread-safe.
-    /// ]]>
-    /// </para>
     /// </remarks>
+    /// <note type="threadunsafe">This method is not thread-safe.</note>
     /// <returns><see langword="true"/> if the instance lock for the app was successfully acquired, otherwise <see langword="false"/>.</returns>
     /// <exception cref="OperationCanceledException"></exception>
     /// <exception cref="IOException"></exception>
     /// <exception cref="ObjectDisposedException"></exception>
-#else
-    /// <remarks>
-    /// <para>If an exception is thrown by the IPC server that listens for notifications from other instances that try to acquire the lock, <c>onServerException</c> (passed in the constructor) will be invoked and then the exception is swallowed.</para>
-    /// <para><b>This method is not thread-safe.</b></para>
-    /// </remarks>
-    /// <returns><see langword="true"/> if the instance lock for the app was successfully acquired, otherwise <see langword="false"/>.</returns>
-    /// <exception cref="OperationCanceledException"></exception>
-    /// <exception cref="IOException"></exception>
-    /// <exception cref="ObjectDisposedException"></exception>
-#endif
     private bool TryAcquireCore(bool notify, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _backend._disposed), this);
@@ -274,18 +252,8 @@ public sealed class InstanceLock<TMessage> : IDisposable
         return isPrimary;
     }
 
-#if DOCFX
-    /// <remarks>
-    /// <![CDATA[
-    /// > [!THREADSAFE]
-    /// > Dispose() is thread-safe.
-    /// ]]>
-    /// </remarks>
-#else
-    /// <remarks>
-    /// <see cref="Dispose"/> is thread-safe.
-    /// </remarks>
-#endif
+    /// <summary>Releases the instance lock and disposes the IPC server.</summary>
+    /// <note type="threadsafe">Disposing is thread-safe.</note>
     // ExceptionAdjustment: M:System.Threading.Interlocked.Exchange``1(``0@,``0) -T:System.NotSupportedException
     public void Dispose() => _backend.Dispose();
 }
