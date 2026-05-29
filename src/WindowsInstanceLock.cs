@@ -21,6 +21,9 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     private Mutex? _mutex;
     private bool _ownsMutex;
 
+    // this is only set if the lock scope is InstanceLockScope.User.
+    private WindowsIdentity? _wid;
+
     /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
     /// <exception cref="InvalidOperationException">The current user's <see cref="SecurityIdentifier"/> could not be retrieved.</exception>
     /// <exception cref="System.Security.SecurityException">The caller does not have the required permissions to retrieve the current user identity.</exception>
@@ -39,7 +42,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         InstanceLockScope.User => $"si_{appId}_user_{GetUserId()}",
         InstanceLockScope.Session => $"si_{appId}_session_{GetSessionId()}",
         // _ => $"si_{baseName}",
-        _ => throw new NotSupportedException(),
+        _ => throw new NotSupportedException($"{scope} is not a supported scope."),
     };
 
     /// <exception cref="NotSupportedException"><paramref name="scope"/> is not a supported scope.</exception>
@@ -49,7 +52,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         InstanceLockScope.Machine => @$"Global\{appId}",
         InstanceLockScope.User => @$"Global\{appId}_user_{GetUserId()}",
         InstanceLockScope.Session => @$"Local\{appId}",
-        _ => throw new NotSupportedException(),
+        _ => throw new NotSupportedException($"{scope} is not a supported scope."),
     };
 
     /// <exception cref="IdentityNotMappedException">A <see cref="SecurityIdentifier"/> could not be mapped to a valid account.</exception>
@@ -64,8 +67,8 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         security.AddAccessRule(_options.Scope switch
         {
             InstanceLockScope.Machine => new(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), MutexRights.Synchronize, AccessControlType.Allow),
-            InstanceLockScope.User or InstanceLockScope.Session => new(WindowsIdentity.GetCurrent().User ?? throw new UnreachableException(), MutexRights.Synchronize, AccessControlType.Allow),
-            _ => throw new NotSupportedException(),
+            InstanceLockScope.User or InstanceLockScope.Session => new((_wid ??= WindowsIdentity.GetCurrent()).User ?? throw new UnreachableException(), MutexRights.Synchronize, AccessControlType.Allow),
+            _ => throw new NotSupportedException($"{_options.Scope} is not a supported scope."),
         });
         return security;
     }
@@ -144,6 +147,8 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
             if (_ownsMutex) try { _mutex.ReleaseMutex(); } catch { }
             _mutex.Dispose();
         }
+
+        _wid?.Dispose();
     }
 
     /// <exception cref="InvalidOperationException">The <see cref="SecurityIdentifier"/> for the current user was <see langword="null"/>.</exception>
@@ -156,5 +161,9 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     }
 
     /// <inheritdoc cref="Process.SessionId" path="/exception"/>
-    private static int GetSessionId() => Process.GetCurrentProcess().SessionId;
+    private static int GetSessionId()
+    {
+        using var proc = Process.GetCurrentProcess();
+        return proc.SessionId;
+    }
 }

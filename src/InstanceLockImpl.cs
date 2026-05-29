@@ -70,10 +70,12 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
     /// The returned <see cref="Task"/> completes when the server loop terminates (due to cancellation,
     /// dispose, or exhausting retries). It does not fault; all exceptions are handled internally via
     /// <paramref name="onException"/> and the configured <see cref="InstanceServerRetryPolicy"/>.
+    /// <br/>
+    /// Exceptions thrown by <paramref name="onMessage"/> are caught and logged, but do not terminate
+    /// the server loop and are not passed to <paramref name="onException"/>.
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="onMessage"/> is <see langword="null"/>.</exception>
     /// <exception cref="ObjectDisposedException">This instance has been disposed.</exception>
-    // ExceptionAdjustment: M:System.Threading.Interlocked.Exchange``1(``0@,``0) -T:System.NotSupportedException
     public Task RunServerLoop(Func<TMessage, ValueTask> onMessage, Func<Exception, bool>? onException, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
@@ -89,6 +91,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
             {
                 try
                 {
+                    if (Volatile.Read(ref _disposed)) return;
                     if (_pipeCts is not null || ct.IsCancellationRequested) return;
                     _pipeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     ct = _pipeCts.Token;
@@ -232,8 +235,8 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
             var length = BinaryPrimitives.ReadInt32LittleEndian(lenBuf.Span);
             const int OneMiB = 1024 * 1024;
-            if (length > OneMiB) throw new InvalidOperationException($"Message is too large. Maximum length is 1MiB. Message length is {(double)length / OneMiB}MiB.");
-            if (length <= 0) throw new UnreachableException($"Message is less than or equal to 0 bytes. ({length} bytes)");
+            if (length > OneMiB) throw new InvalidOperationException($"Message is too large. Maximum length is 1,048,576 bytes (1MiB). Message length is {length} bytes.");
+            if (length <= 0) throw new InvalidOperationException($"Message is less than or equal to 0 bytes. ({length} bytes)");
 
             var msgBuf = length <= buf.Length ? buf.AsMemory(0, length) : new byte[length];
             try
@@ -252,7 +255,6 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
     /// <exception cref="ArgumentException">The serialized message exceeds 1 MiB (1,048,576 bytes).</exception>
     /// <exception cref="ObjectDisposedException"></exception>
-    // ExceptionAdjustment: M:System.Threading.Interlocked.Exchange``1(``0@,``0) -T:System.NotSupportedException
     // ExceptionAdjustment: P:System.Array.Length -T:System.OverflowException
     public void NotifyExistingInstance(Func<TMessage> createMsgToPrimary, CancellationToken ct)
     {
@@ -260,21 +262,22 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
         if (_isPrimary != false) throw new UnreachableException();
         if (Volatile.Read(ref _pipeCts) is not null) throw new UnreachableException($"{nameof(_pipeCts)} is not null. Cannot notify primary instance while server loop is running.");
 
-        _logger?.LogDebug(nameof(NotifyExistingInstance) + ": notify primary via pipe={Pipe}", _pipeName);
-
         lock (_pipeCtsLock)
         {
+            if (Volatile.Read(ref _disposed)) return;
             if (_pipeCts is not null || ct.IsCancellationRequested) return;
             _pipeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             ct = _pipeCts.Token;
         }
+
+        _logger?.LogDebug(nameof(NotifyExistingInstance) + ": notify primary via pipe={Pipe}", _pipeName);
 
         // the best way I could find to do a cancellable synchronous wait (for the delay between retries).
         // we create the object only if the first attempt fails, because in most cases it probably won't.
         ManualResetEventSlim? infWaitEvent = null;
         try
         {
-#pragma warning disable Ex0100
+#pragma warning disable Ex0100 // NotSupportedException from BitCast and SerializeToUtf8Bytes (which wont happen)
             Debug.Assert(!IsSingleByteMessage || (Unsafe.SizeOf<TMessage>() == 1 && typeof(TMessage).IsValueType));
             var message = IsSingleByteMessage
                 ? [Unsafe.BitCast<TMessage, byte>(createMsgToPrimary())]
@@ -284,11 +287,13 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
             const int OneMiB = 1024 * 1024;
             if (message.Length > OneMiB) throw new ArgumentException($"Notification message is too large. Maximum length is 1,048,576 bytes (1MiB). Message length is {message.Length} bytes.", nameof(createMsgToPrimary));
 
-            var totalAttempts = _options.NotificationRetryPolicy.Attempts + 1;
+            var totalAttempts = _options.NotificationRetryPolicy.RetryAttempts + 1;
             for (var attempt = 0; attempt < totalAttempts && !ct.IsCancellationRequested; attempt++) // TODO: maybe dont break (remove the !IsCancellationRequested from the for loop) so that we dont log "failed to notify".
             {
                 var success = NotifyPipe(message, _options.NotificationRetryPolicy.ConnectionTimeout);
                 if (success) return;
+
+                if (_options.NotificationRetryPolicy.MaxJitterDelay <= TimeSpan.Zero) continue;
 
                 try
                 {
@@ -342,9 +347,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                 client.Write(message);
             }
 
-#pragma warning disable CA1849
             client.Flush();
-#pragma warning restore CA1849
             return true;
         }
         catch (TimeoutException)
@@ -363,20 +366,21 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
             _logger?.LogDebug(ioEx, nameof(NotifyPipe) + ": IO error for pipe {Pipe}.", _pipeName);
             return false;
         }
-        catch (Exception ex)
-        {
-            // Unexpected; log and return false so the caller may retry or fail gracefully.
-            _logger?.LogWarning(ex, nameof(NotifyPipe) + ": unexpected error for pipe {Pipe}.", _pipeName);
-            return false;
-        }
     }
 
-    // ExceptionAdjustment: M:System.Threading.Interlocked.Exchange``1(``0@,``0) -T:System.NotSupportedException
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, true)) return;
 
-        var cts = Interlocked.Exchange(ref _pipeCts, null);
+        // Acquire _pipeCtsLock to ensure we don't interleave with a concurrent
+        // RunServerLoop or NotifyExistingInstance that has passed the outer _disposed check
+        // but hasn't yet created its CancellationTokenSource.
+        CancellationTokenSource? cts;
+        lock (_pipeCtsLock)
+        {
+            cts = Interlocked.Exchange(ref _pipeCts, null);
+        }
+
         if (cts is not null)
         {
             try { cts.Cancel(); } catch { }

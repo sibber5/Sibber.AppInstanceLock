@@ -24,29 +24,31 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     private FileStream? _lockFileStream;
     private bool _ownsLock;
 
+    /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
     /// <exception cref="SecurityException"></exception>
     /// <exception cref="InvalidOperationException"></exception>
     /// <exception cref="PlatformNotSupportedException">Getting the folder path of the user profile special folder is not supported on the current platform.</exception>
     public UnixInstanceLock(string appId, InstanceLockOptions options, ILogger<UnixInstanceLock<TMessage>>? logger)
         : base(CreatePipeName(appId, options.Scope), options, logger)
     {
-        _lockFilePath = ChooseLockFilePath(appId, _options.Scope);
+        _lockFilePath = ChooseLockFilePath(appId, _options.Scope, logger);
         _logger?.LogDebug(nameof(UnixInstanceLock<>) + " initialized: lockFile={Lock} pipe={Pipe}", _lockFilePath, _pipeName);
     }
 
+    /// <exception cref="NotSupportedException"><paramref name="scope"/> is not a supported scope.</exception>
     /// <inheritdoc cref="GetSessionId" path="/exception"/>
     private static string CreatePipeName(string appId, InstanceLockScope scope) => scope switch
     {
         InstanceLockScope.Machine => $"si_{appId}",
         InstanceLockScope.User => $"si_{appId}_user_{getuid()}",
         InstanceLockScope.Session => $"si_{appId}_session_{GetSessionId()}",
-        _ => $"si_{appId}",
+        _ => throw new NotSupportedException($"{scope} is not a supported scope."),
     };
 
     /// <exception cref="SecurityException"></exception>
     /// <exception cref="InvalidOperationException"></exception>
     /// <exception cref="PlatformNotSupportedException">Getting the folder path of the user profile special folder is not supported on the current platform.</exception>
-    private static string ChooseLockFilePath(string appId, InstanceLockScope scope)
+    private static string ChooseLockFilePath(string appId, InstanceLockScope scope, ILogger? logger)
     {
         // Session scope: use XDG_RUNTIME_DIR or /run/user/{uid}; fall back to /tmp with session id.
         if (scope is InstanceLockScope.Session)
@@ -59,7 +61,10 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
                     Directory.CreateDirectory(xdg);
                     return Path.Combine(xdg, $"{appId}.lock");
                 }
-                catch { /* fallthrough */ }
+                catch (Exception ex)
+                {
+                    logger?.LogDebug(ex, "Failed to create lock directory at XDG_RUNTIME_DIR '{Path}'. Falling back...", xdg);
+                }
             }
 
             try
@@ -71,7 +76,10 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
                     return Path.Combine(runUser, $"{appId}.lock");
                 }
             }
-            catch { /* fallthrough */ }
+            catch (Exception ex)
+            {
+                logger?.LogDebug(ex, "Failed to evaluate /run/user/ directory. Falling back...");
+            }
 
             // fallback: /tmp with session id suffix
             return Path.Combine(Path.GetTempPath(), $"{appId}_session_{GetSessionId()}.lock");
@@ -91,7 +99,10 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
                         Directory.CreateDirectory(macPath);
                         return Path.Combine(macPath, $"{appId}.lock");
                     }
-                    catch { /* fallthrough */ }
+                    catch (Exception ex)
+                    {
+                        logger?.LogDebug(ex, "Failed to create lock directory at '{Path}'. Falling back...", macPath);
+                    }
                 }
                 else if (OperatingSystem.IsLinux())
                 {
@@ -102,7 +113,10 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
                         Directory.CreateDirectory(localShare);
                         return Path.Combine(localShare, $"{appId}.lock");
                     }
-                    catch { /* fallthrough */ }
+                    catch (Exception ex)
+                    {
+                        logger?.LogDebug(ex, "Failed to create lock directory at '{Path}'. Falling back...", localShare);
+                    }
 
                     // fallback to ~/.config/<app>
                     var config = Path.Combine(home, ".config", appId);
@@ -111,7 +125,10 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
                         Directory.CreateDirectory(config);
                         return Path.Combine(config, $"{appId}.lock");
                     }
-                    catch { /* fallthrough */ }
+                    catch (Exception ex)
+                    {
+                        logger?.LogDebug(ex, "Failed to create lock directory at '{Path}'. Falling back...", config);
+                    }
                 }
                 else
                 {
@@ -162,13 +179,23 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
                 try { Directory.CreateDirectory(parent); } catch { /* ignore */ }
             }
 
-            // open or create the lock file
             var fs = new FileStream(_lockFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
             _lockFileStream = fs;
 
             // get native file descriptor and attempt flock non-blocking exclusive
-            var fd = fs.SafeFileHandle.DangerousGetHandle().ToInt32();
-            var res = flock(fd, LOCK_EX | LOCK_NB);
+            int res;
+            var addRefSuccess = false;
+            try
+            {
+                fs.SafeFileHandle.DangerousAddRef(ref addRefSuccess);
+                var fd = fs.SafeFileHandle.DangerousGetHandle().ToInt32();
+                res = flock(fd, LOCK_EX | LOCK_NB);
+            }
+            finally
+            {
+                if (addRefSuccess) fs.SafeFileHandle.DangerousRelease();
+            }
+
             if (res is 0)
             {
                 _ownsLock = true;
@@ -177,10 +204,14 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
                 return true;
             }
 
+            if (res is not -1)
+            {
+                throw new UnreachableException($"flock returned unexpected value: {res}.");
+            }
+
             // did not acquire (not primary instance) - another process holds the lock
             var err = Marshal.GetLastPInvokeError();
             _logger?.LogDebug("flock failed with errno={Error}; not primary.", err);
-            // close our stream — we do not own the lock
             _lockFileStream.Dispose();
             _lockFileStream = null;
             _ownsLock = false;
