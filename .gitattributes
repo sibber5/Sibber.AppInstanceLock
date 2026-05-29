@@ -15,7 +15,7 @@
 *.slnx     text eol=crlf
 *.csproj   text eol=crlf
 Directory.Build.props text eol=crlf
-Directory.Packages.props text eol = crlf
+Directory.Packages.props text eol=crlf
 
 # JavaScript/Web
 *.js       text eol=lf
