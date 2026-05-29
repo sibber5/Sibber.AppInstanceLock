@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025-2026 sibber (GitHub: sibber5)
+// Copyright (c) 2025-2026 sibber (GitHub: sibber5)
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -105,22 +105,27 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                         Debug.Assert(attempt >= 0);
                         var retryPolicy = _options.InstanceServerRetryPolicy;
                         var uptime = Stopwatch.GetElapsedTime(startTime);
-                        if (uptime >= retryPolicy.MinimumUptime) attempt = 0; // reset backoff if uptime exceeds minimum.
+
+                        if (uptime >= retryPolicy.MinimumUptime)
+                        {
+                            // the server was stable long enough. reset backoff and attempt counter.
+                            attempt = 0;
+                            delay = TimeSpan.Zero;
+                        }
+
+                        var confirmRetry = onException?.Invoke(ex) ?? true;
+                        var retry = confirmRetry && (attempt < retryPolicy.MaxRetries || retryPolicy.MaxRetries == -1);
+
                         delay = attempt switch
                         {
                             0 => TimeSpan.Zero,
                             1 => retryPolicy.InitialDelay,
                             _ => delay * 2,
                         };
+                        if (delay > retryPolicy.MaxDelay) delay = retryPolicy.MaxDelay;
                         Debug.Assert(delay >= TimeSpan.Zero);
 
-                        var confirmRetry = onException?.Invoke(ex) ?? true;
-                        var retry = confirmRetry
-                                && retryPolicy.MinimumUptime != Timeout.InfiniteTimeSpan
-                                && (attempt > 0 || uptime >= retryPolicy.MinimumUptime)
-                                && delay <= retryPolicy.MaxDelay;
-
-                        const string RetryAttrTemplate = " " + nameof(onException) + "={ConfirmRetry}, Uptime={Uptime}, RetryAttempt={RetryAttempt}, Delay={Delay}ms, RetryPolicy={RetryPolicy}";
+                        const string RetryAttrTemplate = " " + nameof(onException) + "->{ConfirmRetry}, Uptime={Uptime}, RetryAttempt={RetryAttempt}, Delay={Delay}ms, RetryPolicy={RetryPolicy}";
                         if (!retry)
                         {
                             _logger?.LogInformation(ex, "Terminating primary instance pipe server loop..." + RetryAttrTemplate, confirmRetry, uptime, attempt, delay.TotalMilliseconds, retryPolicy);

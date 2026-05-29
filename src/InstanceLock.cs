@@ -74,14 +74,16 @@ public record NotifyInstanceRetryPolicy(int Attempts, TimeSpan Delay, TimeSpan C
 
 /// <inheritdoc cref="InstanceLockOptions.InstanceServerRetryPolicy"/>
 /// <param name="MinimumUptime">
-/// The minimum uptime for a retry to be considered. If the server has been up for less, then it will not be restarted.<br/>
-/// (This, of course, only applies if a restart is not being attempted.)
+/// The minimum duration the server must have been running before its uptime is considered "stable."
+/// When the server has been running for at least this duration before a failure occurs, the backoff delay resets to zero
+/// (the next restart attempt happens immediately, and subsequent failures start the exponential backoff from <see cref="InitialDelay"/> again).
 /// </param>
-/// <param name="InitialDelay">The initial time to wait before attempting to restart the server again after the first attempt. Every following attempt will delay by double the amount delayed the previous attempt. (the first attempt will always happen instantly.)</param>
-/// <param name="MaxDelay">The maximum backoff delay threshold. If the calculated backoff delay (which doubles after each failed restart attempt) exceeds this value, the server loop will terminate permanently rather than continuing to retry.</param>
-public record InstanceServerRetryPolicy(TimeSpan MinimumUptime, TimeSpan InitialDelay, TimeSpan MaxDelay)
+/// <param name="InitialDelay">The initial delay before attempting to restart the server after the first failure. Each subsequent consecutive failure doubles the delay, up to <see cref="MaxDelay"/>. The very first restart attempt always happens immediately (zero delay).</param>
+/// <param name="MaxDelay">The ceiling on the exponential backoff delay. Once the calculated delay reaches this value, it remains capped here for all subsequent retry attempts.</param>
+/// <param name="MaxRetries">The maximum number of consecutive restart attempts allowed before the server loop terminates permanently. Set to <c>-1</c> for unlimited retries. The counter resets to zero each time the server achieves <see cref="MinimumUptime"/>.</param>
+public record InstanceServerRetryPolicy(TimeSpan MinimumUptime, TimeSpan InitialDelay, TimeSpan MaxDelay, int MaxRetries = -1)
 {
-    public static readonly InstanceServerRetryPolicy DontRetry = new(Timeout.InfiniteTimeSpan, default, default);
+    public static readonly InstanceServerRetryPolicy DontRetry = new(default, default, default, MaxRetries: 0);
 }
 
 /// <summary>
