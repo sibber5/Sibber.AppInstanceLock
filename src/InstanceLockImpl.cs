@@ -30,7 +30,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
     internal bool? _isPrimary;
 
-    protected static readonly bool IsMessageByte = typeof(TMessage) == typeof(byte) || typeof(TMessage) == typeof(sbyte) || typeof(TMessage) == typeof(bool) || (typeof(TMessage).IsEnum && typeof(TMessage).GetEnumUnderlyingType() == typeof(byte));
+    protected static readonly bool IsSingleByteMessage = typeof(TMessage) == typeof(byte) || typeof(TMessage) == typeof(sbyte) || typeof(TMessage) == typeof(bool) || (typeof(TMessage).IsEnum && typeof(TMessage).GetEnumUnderlyingType() == typeof(byte));
 
     // ReSharper disable once StaticMemberInGenericType - fine since there will likely only be a single instantiation of it for the whole program.
     private static readonly JsonSerializerOptions _jsonOptions = new()
@@ -49,15 +49,30 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
     /// <exception cref="IOException"></exception>
     protected abstract NamedPipeServerStream CreatePipeServer();
 
-    /// <remarks>This method is not thread-safe.</remarks>
+    /// <summary>
+    /// Attempts to acquire the primary instance lock using the platform-specific mechanism.
+    /// </summary>
+    /// <remarks>
+    /// This method is intentionally synchronous because the application must not proceed before
+    /// determining whether it is the primary instance.
+    /// </remarks>
+    /// <note type="threadunsafe"><see cref="TryAcquirePrimary"/> is not thread-safe.</note>
     /// <returns><see langword="true"/> if the current instance is the primary instance, otherwise <see langword="false"/>.</returns>
     /// <exception cref="IOException"></exception>
     /// <exception cref="ObjectDisposedException"></exception>
-    public abstract bool TryAcquirePrimary(); // no point in making this async because we don't want the app to start before checking if it's the primary instance anyway.
+    public abstract bool TryAcquirePrimary();
 
-    /// <exception cref="ArgumentNullException"></exception>
-    /// <exception cref="ObjectDisposedException"></exception>
-    /// <exception cref="IOException"></exception>
+    /// <summary>
+    /// Starts the IPC named-pipe server loop on a background thread. The loop listens for incoming
+    /// messages from secondary instances and dispatches them to <paramref name="onMessage"/>.
+    /// </summary>
+    /// <remarks>
+    /// The returned <see cref="Task"/> completes when the server loop terminates (due to cancellation,
+    /// dispose, or exhausting retries). It does not fault; all exceptions are handled internally via
+    /// <paramref name="onException"/> and the configured <see cref="InstanceServerRetryPolicy"/>.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="onMessage"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ObjectDisposedException">This instance has been disposed.</exception>
     // ExceptionAdjustment: M:System.Threading.Interlocked.Exchange``1(``0@,``0) -T:System.NotSupportedException
     public Task RunServerLoop(Func<TMessage, ValueTask> onMessage, Func<Exception, bool>? onException, CancellationToken ct)
     {
@@ -119,7 +134,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                         delay = attempt switch
                         {
                             0 => TimeSpan.Zero,
-                            1 => retryPolicy.InitialDelay,
+                            1 => retryPolicy.BaseDelay,
                             _ => delay * 2,
                         };
                         if (delay > retryPolicy.MaxDelay) delay = retryPolicy.MaxDelay;
@@ -166,7 +181,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                     bool read;
                     TMessage message = default!;
 
-                    if (IsMessageByte)
+                    if (IsSingleByteMessage)
                     {
                         Debug.Assert(Unsafe.SizeOf<TMessage>() == 1 && typeof(TMessage).IsValueType);
                         var msgRaw = pipe.ReadByte();
@@ -235,11 +250,11 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
         }
     }
 
-    /// <exception cref="ArgumentException">The message created by <paramref name="createNotificationMessage"/> after serialization is too large (greater than 1MB).</exception>
+    /// <exception cref="ArgumentException">The serialized message exceeds 1 MiB (1,048,576 bytes).</exception>
     /// <exception cref="ObjectDisposedException"></exception>
     // ExceptionAdjustment: M:System.Threading.Interlocked.Exchange``1(``0@,``0) -T:System.NotSupportedException
     // ExceptionAdjustment: P:System.Array.Length -T:System.OverflowException
-    public void NotifyExistingInstance(Func<TMessage> createNotificationMessage, CancellationToken ct)
+    public void NotifyExistingInstance(Func<TMessage> createMsgToPrimary, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
         if (_isPrimary != false) throw new UnreachableException();
@@ -260,24 +275,24 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
         try
         {
 #pragma warning disable Ex0100
-            Debug.Assert(!IsMessageByte || (Unsafe.SizeOf<TMessage>() == 1 && typeof(TMessage).IsValueType));
-            var message = IsMessageByte
-                ? [Unsafe.BitCast<TMessage, byte>(createNotificationMessage())]
-                : JsonSerializer.SerializeToUtf8Bytes(createNotificationMessage(), _jsonOptions);
+            Debug.Assert(!IsSingleByteMessage || (Unsafe.SizeOf<TMessage>() == 1 && typeof(TMessage).IsValueType));
+            var message = IsSingleByteMessage
+                ? [Unsafe.BitCast<TMessage, byte>(createMsgToPrimary())]
+                : JsonSerializer.SerializeToUtf8Bytes(createMsgToPrimary(), _jsonOptions);
 #pragma warning restore Ex0100
 
             const int OneMiB = 1024 * 1024;
-            if (message.Length > OneMiB) throw new ArgumentException($"Notification message is too large. Maximum length is 1MiB. Message length is {(double)message.Length / OneMiB}MiB.", nameof(createNotificationMessage));
+            if (message.Length > OneMiB) throw new ArgumentException($"Notification message is too large. Maximum length is 1,048,576 bytes (1MiB). Message length is {message.Length} bytes.", nameof(createMsgToPrimary));
 
-            var totalAttempts = _options.NotifyInstanceRetryPolicy.Attempts + 1;
+            var totalAttempts = _options.NotificationRetryPolicy.Attempts + 1;
             for (var attempt = 0; attempt < totalAttempts && !ct.IsCancellationRequested; attempt++) // TODO: maybe dont break (remove the !IsCancellationRequested from the for loop) so that we dont log "failed to notify".
             {
-                var success = NotifyPipe(message, _options.NotifyInstanceRetryPolicy.ConnectionTimeout);
+                var success = NotifyPipe(message, _options.NotificationRetryPolicy.ConnectionTimeout);
                 if (success) return;
 
                 try
                 {
-                    var delay = Random.Shared.NextDouble() * _options.NotifyInstanceRetryPolicy.Delay;
+                    var delay = Random.Shared.NextDouble() * _options.NotificationRetryPolicy.MaxJitterDelay;
                     infWaitEvent ??= new(false);
                     // synchronously block here to halt the secondary instance from continuing its startup sequence while we attempt to notify the primary instance.
                     infWaitEvent.Wait(delay, ct);
@@ -314,7 +329,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
         {
             client.Connect(connectTimeout);
 
-            if (IsMessageByte)
+            if (IsSingleByteMessage)
             {
                 Debug.Assert(message.Length is 1);
                 client.WriteByte(message[0]);

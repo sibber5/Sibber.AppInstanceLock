@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025-2026 sibber (GitHub: sibber5)
+// Copyright (c) 2025-2026 sibber (GitHub: sibber5)
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -24,9 +24,9 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     private FileStream? _lockFileStream;
     private bool _ownsLock;
 
-    /// <exception cref="PlatformNotSupportedException"></exception>
     /// <exception cref="SecurityException"></exception>
     /// <exception cref="InvalidOperationException"></exception>
+    /// <exception cref="PlatformNotSupportedException">Getting the folder path of the user profile special folder is not supported on the current platform.</exception>
     public UnixInstanceLock(string appId, InstanceLockOptions options, ILogger<UnixInstanceLock<TMessage>>? logger)
         : base(CreatePipeName(appId, options.Scope), options, logger)
     {
@@ -44,8 +44,8 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     };
 
     /// <exception cref="SecurityException"></exception>
-    /// <exception cref="PlatformNotSupportedException"></exception>
     /// <exception cref="InvalidOperationException"></exception>
+    /// <exception cref="PlatformNotSupportedException">Getting the folder path of the user profile special folder is not supported on the current platform.</exception>
     private static string ChooseLockFilePath(string appId, InstanceLockScope scope)
     {
         // Session scope: use XDG_RUNTIME_DIR or /run/user/{uid}; fall back to /tmp with session id.
@@ -145,7 +145,8 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         throw new UnreachableException($"Unexpected scope ({scope}) in {nameof(ChooseLockFilePath)}.");
     }
 
-    /// <remarks>This method is not thread-safe.</remarks>
+    /// <remarks></remarks>
+    /// <note type="threadunsafe">This method is not thread-safe.</note>
     /// <exception cref="ObjectDisposedException"></exception>
     public override bool TryAcquirePrimary()
     {

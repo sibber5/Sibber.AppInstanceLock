@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025-2026 sibber (GitHub: sibber5)
+// Copyright (c) 2025-2026 sibber (GitHub: sibber5)
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -22,7 +22,8 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     private bool _ownsMutex;
 
     /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
-    /// <inheritdoc cref="GetUserId"/>
+    /// <exception cref="InvalidOperationException">The current user's <see cref="SecurityIdentifier"/> could not be retrieved.</exception>
+    /// <exception cref="System.Security.SecurityException">The caller does not have the required permissions to retrieve the current user identity.</exception>
     public WindowsInstanceLock(string appId, InstanceLockOptions options, ILogger<WindowsInstanceLock<TMessage>>? logger)
         : base(CreatePipeName(appId, options.Scope), options, logger)
     {
@@ -51,9 +52,10 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         _ => throw new NotSupportedException(),
     };
 
-    /// <exception cref="IdentityNotMappedException"></exception>
-    /// <inheritdoc cref="GetUserId"/>
-    /// <exception cref="NotSupportedException"></exception>
+    /// <exception cref="IdentityNotMappedException">A <see cref="SecurityIdentifier"/> could not be mapped to a valid account.</exception>
+    /// <exception cref="InvalidOperationException">The current user's <see cref="SecurityIdentifier"/> could not be retrieved.</exception>
+    /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
+    /// <exception cref="System.Security.SecurityException">The caller does not have the required permissions to retrieve the current user identity.</exception>
     private MutexSecurity CreateMutexSecurity()
     {
         var security = new MutexSecurity();
@@ -68,7 +70,8 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         return security;
     }
 
-    /// <remarks>This method is not thread-safe.</remarks>
+    /// <remarks></remarks>
+    /// <note type="threadunsafe">This method is not thread-safe.</note>
     /// <exception cref="IOException"></exception>
     /// <exception cref="ObjectDisposedException"></exception>
     public override bool TryAcquirePrimary()
