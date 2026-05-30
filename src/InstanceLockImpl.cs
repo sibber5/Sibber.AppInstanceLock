@@ -17,18 +17,24 @@ namespace Sibber.AppInstanceLock;
 
 internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLockOptions options, ILogger? logger) : IDisposable
 {
-    protected readonly string _pipeName = pipeName;
+    internal readonly string _pipeName = pipeName;
     protected readonly InstanceLockOptions _options = options;
     protected readonly ILogger? _logger = logger;
 
 #pragma warning disable CA2213 // Disposable fields should be disposed - it is disposed.
-    private CancellationTokenSource? _pipeCts;
+    internal CancellationTokenSource? _pipeCts;
 #pragma warning restore CA2213
-    private readonly Lock _pipeCtsLock = new();
+    internal readonly Lock _pipeCtsLock = new();
 
     internal bool _disposed;
 
     internal bool? _isPrimary;
+
+#if INCLUDE_TEST_HOOKS
+    internal Action? OnBeforePipeCtsLock { get; set; }
+    internal Action? OnBeforeServerLoopCleanup { get; set; }
+    internal Action? OnBeforeDisposeCtsLock { get; set; }
+#endif
 
     protected static readonly bool IsSingleByteMessage = typeof(TMessage) == typeof(byte) || typeof(TMessage) == typeof(sbyte) || typeof(TMessage) == typeof(bool) || (typeof(TMessage).IsEnum && typeof(TMessage).GetEnumUnderlyingType() == typeof(byte));
 
@@ -87,6 +93,9 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
         return Task.Run(async () =>
 #pragma warning restore Ex0100
         {
+#if INCLUDE_TEST_HOOKS
+            OnBeforePipeCtsLock?.Invoke();
+#endif
             lock (_pipeCtsLock)
             {
                 try
@@ -164,6 +173,9 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
             }
             finally
             {
+#if INCLUDE_TEST_HOOKS
+                OnBeforeServerLoopCleanup?.Invoke();
+#endif
                 var cts = Interlocked.Exchange(ref _pipeCts, null);
                 cts?.Dispose();
 
@@ -375,6 +387,9 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
         // Acquire _pipeCtsLock to ensure we don't interleave with a concurrent
         // RunServerLoop or NotifyExistingInstance that has passed the outer _disposed check
         // but hasn't yet created its CancellationTokenSource.
+#if INCLUDE_TEST_HOOKS
+        OnBeforeDisposeCtsLock?.Invoke();
+#endif
         CancellationTokenSource? cts;
         lock (_pipeCtsLock)
         {

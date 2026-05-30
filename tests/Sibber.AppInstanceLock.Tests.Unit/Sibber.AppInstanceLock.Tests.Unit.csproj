@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Sibber.AppInstanceLock.Tests.Unit</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Sibber.AppInstanceLock.csproj" AdditionalProperties="IncludeTestHooks=true" />
+    <ProjectReference Include="..\Sibber.AppInstanceLock.Tests.Shared\Sibber.AppInstanceLock.Tests.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

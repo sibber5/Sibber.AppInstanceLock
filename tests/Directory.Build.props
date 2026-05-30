@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <_ParentDirectoryBuildProps>$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))</_ParentDirectoryBuildProps>
+  </PropertyGroup>
+
+  <Import Project="$(_ParentDirectoryBuildProps)" Condition="Exists('$(_ParentDirectoryBuildProps)')" />
+
+  <PropertyGroup>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+</Project>

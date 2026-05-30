@@ -1,0 +1,410 @@
+// Copyright (c) 2026 sibber (GitHub: sibber5)
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+namespace Sibber.AppInstanceLock.Tests.Integration;
+
+public sealed class IpcCommunicationTests : IntegrationTestBase
+{
+    /// <summary>
+    /// Awaits the internal _pipeServerLoopTask. Used solely for test synchronization.
+    /// </summary>
+    private static async Task AwaitServerLoopAsync(InstanceLock<string> instance, TimeSpan timeout)
+    {
+        var task = instance._pipeServerLoopTask;
+        if (task is null) return;
+        await task.WaitAsync(timeout, TestContext.Current.CancellationToken);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // INVARIANT: IPC Message Framing ─ Complex Type (JSON length-prefixed)
+    // "Secondary instances transmit data using a 4-byte LE length + UTF-8 JSON payload."
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task IpcRoundTrip_StringMessage_ReceivedByPrimary()
+    {
+        var appId = UniqueAppId();
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expected = "hello-from-secondary";
+
+        var primary = CreateLock(
+            appId,
+            createMsg: () => expected,
+            onOtherInstance: msg =>
+            {
+                tcs.TrySetResult(msg);
+                return ValueTask.CompletedTask;
+            });
+
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        var secondary = CreateLock(
+            appId,
+            createMsg: () => expected,
+            onOtherInstance: _ => ValueTask.CompletedTask);
+
+        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.Equal(expected, received);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // INVARIANT: IPC Message Framing ─ Single-byte type (raw byte)
+    // "For 1-byte value types: Raw 1-byte transmission."
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task IpcRoundTrip_ByteMessage_ReceivedByPrimary()
+    {
+        var appId = UniqueAppId();
+        var tcs = new TaskCompletionSource<byte>(TaskCreationOptions.RunContinuationsAsynchronously);
+        byte expected = 0xAB;
+
+        var primary = CreateLock(
+            appId,
+            createMsg: () => expected,
+            onOtherInstance: msg =>
+            {
+                tcs.TrySetResult(msg);
+                return ValueTask.CompletedTask;
+            });
+
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        var secondary = new InstanceLock<byte>(
+            appId,
+            createMsgToPrimary: () => expected,
+            onOtherInstanceOpened: _ => ValueTask.CompletedTask);
+        _disposables.Add(secondary);
+
+        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.Equal(expected, received);
+    }
+
+    [Fact]
+    public async Task IpcRoundTrip_BoolMessage_ReceivedByPrimary()
+    {
+        var appId = UniqueAppId();
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var primary = new InstanceLock<bool>(
+            appId,
+            createMsgToPrimary: () => true,
+            onOtherInstanceOpened: msg =>
+            {
+                tcs.TrySetResult(msg);
+                return ValueTask.CompletedTask;
+            });
+        _disposables.Add(primary);
+
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        var secondary = new InstanceLock<bool>(
+            appId,
+            createMsgToPrimary: () => true,
+            onOtherInstanceOpened: _ => ValueTask.CompletedTask);
+        _disposables.Add(secondary);
+
+        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.True(received);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // INVARIANT: Multiple IPC messages across multiple secondaries
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task IpcRoundTrip_MultipleSecondaries_AllMessagesReceived()
+    {
+        var appId = UniqueAppId();
+        var received = new List<string>();
+        var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        const int Count = 5;
+
+        var primary = CreateLock(
+            appId,
+            createMsg: () => "x",
+            onOtherInstance: msg =>
+            {
+                lock (received)
+                {
+                    received.Add(msg);
+                    if (received.Count == Count) allReceived.TrySetResult();
+                }
+                return ValueTask.CompletedTask;
+            });
+
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        for (var i = 0; i < Count; i++)
+        {
+            var idx = i;
+            var secondary = CreateLock(
+                appId,
+                createMsg: () => $"msg-{idx}",
+                onOtherInstance: _ => ValueTask.CompletedTask);
+            Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+            secondary.Dispose();
+
+            // brief pause to let the pipe server cycle between connections
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        await allReceived.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Assert.Equal(Count, received.Count);
+        for (var i = 0; i < Count; i++)
+        {
+            Assert.Contains($"msg-{i}", received);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // INVARIANT: Notification Handshake Resilience
+    // "Secondary instances block and retry sending their message."
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task NotificationRetry_SecondaryRetriesUntilPrimaryAccepts()
+    {
+        var appId = UniqueAppId();
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var options = new InstanceLockOptions
+        {
+            // generous retry window so the secondary has enough attempts
+            NotificationRetryPolicy = new NotificationRetryPolicy(
+                RetryAttempts: 20,
+                MaxJitterDelay: TimeSpan.FromMilliseconds(150),
+                ConnectionTimeout: TimeSpan.FromMilliseconds(500)),
+        };
+
+        var primary = CreateLock(
+            appId,
+            createMsg: () => "msg",
+            onOtherInstance: msg =>
+            {
+                tcs.TrySetResult(msg);
+                return ValueTask.CompletedTask;
+            },
+            options: options);
+
+        // Primary acquires lock and starts server.
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        // Secondary runs concurrently ─ the pipe server is already started, but the
+        // notification retry policy handles the inherent race between
+        // WaitForConnectionAsync and the client's Connect call.
+        var secondaryTask = Task.Run(() =>
+        {
+            var secondary = CreateLock(
+                appId,
+                createMsg: () => "retry-delivery",
+                onOtherInstance: _ => ValueTask.CompletedTask,
+                options: options);
+            secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken);
+        }, TestContext.Current.CancellationToken);
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+        Assert.Equal("retry-delivery", received);
+
+        await secondaryTask.WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // INVARIANT: Server Loop Resilience ─ onMessage exceptions are swallowed
+    // "Handler exceptions (onMessage) are caught, logged, and ignored."
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ServerLoop_OnMessageThrows_ServerContinuesAcceptingMessages()
+    {
+        var appId = UniqueAppId();
+        var callCount = 0;
+        var secondMessageTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var primary = CreateLock(
+            appId,
+            createMsg: () => "ping",
+            onOtherInstance: msg =>
+            {
+                var n = Interlocked.Increment(ref callCount);
+                if (n == 1) throw new InvalidOperationException("Intentional test explosion");
+                secondMessageTcs.TrySetResult(msg);
+                return ValueTask.CompletedTask;
+            });
+
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        // first secondary triggers the throw
+        var s1 = CreateLock(appId, () => "first", _ => ValueTask.CompletedTask);
+        Assert.False(s1.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        s1.Dispose();
+
+        // allow pipe server to cycle back to WaitForConnectionAsync
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+
+        // second secondary should still be handled
+        var s2 = CreateLock(appId, () => "second", _ => ValueTask.CompletedTask);
+        Assert.False(s2.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        var received = await secondMessageTcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.Equal("second", received);
+        Assert.True(callCount >= 2);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // INVARIANT: Server Loop Resilience ─ onServerException controls retry
+    // "If onServerException returns false, the server will terminate."
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ServerLoop_OnServerExceptionReturnsFalse_ServerTerminates()
+    {
+        var appId = UniqueAppId();
+        var exceptionSeen = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var options = new InstanceLockOptions
+        {
+            InstanceServerRetryPolicy = InstanceServerRetryPolicy.DontRetry,
+        };
+
+        var primary = CreateLock(
+            appId,
+            createMsg: () => "x",
+            onOtherInstance: _ => ValueTask.CompletedTask,
+            onServerException: ex =>
+            {
+                exceptionSeen.TrySetResult(ex);
+                return false; // terminate
+            },
+            options: options);
+
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        // Trigger a server-side exception by connecting and sending a malformed length header
+        // that indicates a message larger than 1 MiB, causing InvalidOperationException.
+        var pipeName = primary._backend._pipeName;
+        using (var maliciousClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.Out))
+        {
+            await maliciousClient.ConnectAsync(5000, TestContext.Current.CancellationToken);
+            // write a 4-byte LE int with value > 1 MiB to trigger the size guard
+            var buf = new byte[4];
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(buf, 2 * 1024 * 1024);
+            await maliciousClient.WriteAsync(buf, TestContext.Current.CancellationToken);
+            await maliciousClient.FlushAsync(TestContext.Current.CancellationToken);
+        }
+
+        // onServerException should have been called
+        var ex2 = await exceptionSeen.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.IsType<InvalidOperationException>(ex2);
+
+        // The server loop should have completed (no fault on the returned task).
+        await AwaitServerLoopAsync(primary, TimeSpan.FromSeconds(5));
+
+        var serverTask = primary._pipeServerLoopTask;
+        if (serverTask is not null)
+        {
+            Assert.True(serverTask.IsCompleted);
+            Assert.False(serverTask.IsFaulted);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // INVARIANT: Notification with no IPC configured is a no-op
+    // "If createMsgToPrimary and onOtherInstanceOpened are null, no IPC occurs."
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TryAcquireOrNotify_WithoutIpcCallbacks_SecondaryDoesNotThrow()
+    {
+        var appId = UniqueAppId();
+        var primary = CreateLock<string>(appId);
+        Assert.True(primary.TryAcquire(TestContext.Current.CancellationToken));
+
+        // secondary with no IPC callbacks ─ should silently return false
+        var secondary = CreateLock<string>(appId);
+        Assert.False(secondary.TryAcquire(TestContext.Current.CancellationToken));
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // INVARIANT: Named Pipe Server Cardinality
+    // "maxNumberOfServerInstances: 1 ─ prevents multiple listeners."
+    //
+    // We verify this indirectly: if the primary is listening, a second
+    // InstanceLock that also acquired the lock (impossible with real OS
+    // primitives, but tested via sequential acquire/release) would fail to
+    // create a second pipe server. This is implicitly validated by the
+    // concurrent race test ─ only one primary ever exists.
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void PipeServer_OnlyStartedWhenIpcCallbacksProvided()
+    {
+        var appId = UniqueAppId();
+
+        // no IPC callbacks → no server task
+        var primary = CreateLock<string>(appId);
+        Assert.True(primary.TryAcquire(TestContext.Current.CancellationToken));
+
+        var serverTask = primary._pipeServerLoopTask;
+
+        Assert.Null(serverTask);
+    }
+
+    [Fact]
+    public void PipeServer_StartedWhenIpcCallbacksProvided()
+    {
+        var appId = UniqueAppId();
+
+        var primary = CreateLock(
+            appId,
+            createMsg: () => "x",
+            onOtherInstance: _ => ValueTask.CompletedTask);
+
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        var serverTask = primary._pipeServerLoopTask;
+
+        Assert.NotNull(serverTask);
+        Assert.False(serverTask.IsCompleted);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // INVARIANT: Atomic Teardown ─ Dispose cancels the pipe CTS
+    // "Invoking Dispose() must cancel the underlying _pipeCts."
+    // ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Dispose_WhileServerWaiting_ServerLoopCompletesGracefully()
+    {
+        var appId = UniqueAppId();
+        var primary = CreateLock(
+            appId,
+            createMsg: () => "x",
+            onOtherInstance: _ => ValueTask.CompletedTask);
+
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        // Server is now blocked on WaitForConnectionAsync. Dispose should cancel it.
+        primary.Dispose();
+
+        // The server task should complete without faulting.
+        await AwaitServerLoopAsync(primary, TimeSpan.FromSeconds(5));
+
+        var serverTask = primary._pipeServerLoopTask;
+        if (serverTask is not null)
+        {
+            Assert.True(serverTask.IsCompleted);
+            Assert.False(serverTask.IsFaulted);
+        }
+    }
+}

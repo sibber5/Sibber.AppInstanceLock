@@ -28,13 +28,13 @@ public sealed class InstanceLock<TMessage> : IDisposable
     private readonly string _appId;
     private readonly InstanceLockOptions _options;
     private readonly ILogger<InstanceLock<TMessage>>? _logger;
-    private readonly InstanceLockImpl<TMessage> _backend;
+    internal readonly InstanceLockImpl<TMessage> _backend;
 
     private readonly Func<TMessage>? _createMsgToPrimary;
     private readonly Func<TMessage, ValueTask>? _onOtherInstanceOpened;
     private readonly Func<Exception, bool>? _onServerException;
 
-    private Task? _pipeServerLoopTask;
+    internal Task? _pipeServerLoopTask;
 
     /// <param name="appId">
     /// <para>

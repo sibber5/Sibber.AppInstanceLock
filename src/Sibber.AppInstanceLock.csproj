@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -18,6 +18,22 @@
     <!-- For Source Link -->
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
   </PropertyGroup>
+
+  <!-- Enable test hooks by default in Debug configuration so IDE design-time builds (e.g. Rider) can resolve test hook symbols. Release builds do not include them unless explicitly passed via ProjectReference. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' and '$(IncludeTestHooks)' == ''">
+    <IncludeTestHooks>true</IncludeTestHooks>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IncludeTestHooks)' == 'true'">
+    <DefineConstants>$(DefineConstants);INCLUDE_TEST_HOOKS</DefineConstants>
+    <ArtifactsPivots>$(ArtifactsPivots)_testhooks</ArtifactsPivots>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sibber.AppInstanceLock.Tests.Shared" />
+    <InternalsVisibleTo Include="Sibber.AppInstanceLock.Tests.Integration" />
+    <InternalsVisibleTo Include="Sibber.AppInstanceLock.Tests.Unit" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Include="../README.md" Pack="true" PackagePath="/" Visible="false" />
