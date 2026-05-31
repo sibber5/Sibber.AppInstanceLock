@@ -3,17 +3,19 @@ root = true
 
 #### Core EditorConfig Options ####
 
-[*.{cs,xaml,csproj,props}]
+[*]
+end_of_line = lf
+
+[*.{cs,xaml,slnx,csproj,props}]
 
 # Indentation and spacing
 indent_style = space
 
 # New line preferences
-end_of_line = crlf
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-[*.{csproj,props}]
+[*.{slnx,csproj,props}]
 
 # Indentation and spacing
 indent_size = 2
