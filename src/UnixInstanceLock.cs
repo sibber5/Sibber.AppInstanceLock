@@ -229,8 +229,8 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         }
     }
 
-    /// <exception cref="IOException"></exception>
 #pragma warning disable Ex0100 // all of the exceptions that the constructor throws except for IOException are for invalid arguments. none of the arguments being passed in are invalid; _pipeName is sanitized.
+    /// <exception cref="IOException"></exception>
     protected override NamedPipeServerStream CreatePipeServer() => new
 #pragma warning restore Ex0100
     (

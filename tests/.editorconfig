@@ -1,0 +1,19 @@
+[*.cs]
+
+# CA1707: Identifiers should not contain underscores
+dotnet_diagnostic.CA1707.severity = suggestion
+
+# CA2007: Do not directly await a Task (code analysis)
+dotnet_diagnostic.CA2007.severity = suggestion
+
+# CA1416: Validate platform compatibility
+dotnet_diagnostic.CA1416.severity = none
+
+# CA1515: Consider making public types internal
+dotnet_diagnostic.CA1515.severity = suggestion
+
+# CS1591: Missing XML comment for publicly visible type or member
+dotnet_diagnostic.CS1591.severity = none
+
+# CS1573: Parameter has no matching param tag in the XML comment
+dotnet_diagnostic.CS1573.severity = none

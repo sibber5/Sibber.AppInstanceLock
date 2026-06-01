@@ -2,11 +2,12 @@
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
     <File Path="global.json" />
   </Folder>
   <Folder Name="/tests/">
+    <File Path="tests/.editorconfig" />
     <File Path="tests/Directory.Build.props" />
-    <File Path="tests/Directory.Build.targets" />
     <Project Path="tests/Sibber.AppInstanceLock.Tests.Integration/Sibber.AppInstanceLock.Tests.Integration.csproj" />
     <Project Path="tests/Sibber.AppInstanceLock.Tests.Unit/Sibber.AppInstanceLock.Tests.Unit.csproj" />
     <Project Path="tests/Sibber.AppInstanceLock.Tests.Shared/Sibber.AppInstanceLock.Tests.Shared.csproj" />

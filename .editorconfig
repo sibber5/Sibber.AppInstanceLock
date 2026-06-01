@@ -313,5 +313,17 @@ dotnet_diagnostic.IDE0046.severity = suggestion
 # CA1873: Avoid potentially expensive logging
 dotnet_diagnostic.CA1873.severity = suggestion
 
+# CA1848: Use the LoggerMessage delegates
+dotnet_diagnostic.CA1848.severity = suggestion
+
 # CA5394: Do not use insecure randomness
-dotnet_diagnostic.CA5394.severity = suggestion
+dotnet_diagnostic.CA5394.severity = none
+
+# CA1031: Do not catch general exception types
+dotnet_diagnostic.CA1031.severity = suggestion
+
+# CS1591: Missing XML comment for publicly visible type or member
+dotnet_diagnostic.CS1591.severity = suggestion
+
+# CS1573: Parameter has no matching param tag in the XML comment
+dotnet_diagnostic.CS1573.severity = suggestion

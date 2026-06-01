@@ -2,12 +2,14 @@
   <PropertyGroup>
 
     <TargetFramework>net10.0</TargetFramework>
+
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
+
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
     <Features>strict</Features>
-
-    <UseArtifactsOutput>true</UseArtifactsOutput>
 
     <AnalysisLevel>latest-all</AnalysisLevel>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
@@ -15,9 +17,6 @@
 
     <WarningsAsErrors>$(WarningsAsErrors);nullable</WarningsAsErrors>
     <!--<CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>-->
-
-    <!-- 'CA1848: Use the LoggerMessage delegates', 'CA1031: Do not catch general exception types', 'CS1591: Missing XML comment for publicly visible type or member', 'CS1573: Parameter has no matching param tag in the XML comment' -->
-    <NoWarn>$(NoWarn);CA1848;CA1031;CS1591;CS1573</NoWarn>
 
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 

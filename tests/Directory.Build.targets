@@ -1,6 +1,0 @@
-<Project>
-  <PropertyGroup>
-    <!-- CA1707: Identifiers should not contain underscores; CA2007: Do not directly await a Task (code analysis); CA1416: Validate platform compatibility; CA1515: Consider making public types internal -->
-    <NoWarn>$(NoWarn);CA1707;CA2007;CA1416;CA1515</NoWarn>
-  </PropertyGroup>
-</Project>
