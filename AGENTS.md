@@ -1,79 +1,37 @@
 # AGENTS.md
 
-This file provides system context and instructions for AI coding agents operating on the `Sibber.SingleInstanceApp` repository.
-
 ## Project Overview
+- **Library**: `Sibber.AppInstanceLock` (Enforces single running instances across OSes/sessions).
+- **Target Framework**: .NET 10 (`net10.0`).
+- **Dependencies**: Central Package Management (`Directory.Packages.props`) is enabled.
 
-`Sibber.AppInstanceLock` is a lightweight cross-platform .NET library that enforces a single running instance of an application. The library:
-- Restricts application execution based on lock scopes: `Session` (logon session), `User` (current user account), or `Machine` (machine-wide).
-- Supports Windows, Linux, and macOS platforms.
-- Utilizes OS-native locking mechanisms: Mutexes on Windows and `flock` file locking on Unix systems.
-- Leverages Named Pipes for inter-process communication (IPC) to notify the primary instance and pass message payloads when secondary instances are launched.
+## Development & Build Environment
+- **Artifacts**: Uses `UseArtifactsOutput=true`. Build outputs are routed to the `artifacts/` folder.
+- **Analyzers**: Uses `latest-all` analysis level and `Tetractic.CodeAnalysis.ExceptionAnalyzers`. `src/ExceptionAdjustments.txt` is used for analyzer tuning.
+- **Unsafe Code**: P/Invoke and native interop are heavily utilized (`<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`).
+- **Test Hooks**: The `INCLUDE_TEST_HOOKS` constant is defined in `Debug` builds (unless disabled). Be aware that internal logic may diverge when this is defined.
 
-## Tech Stack & Tooling
+## Code Style & Standards
+- **Persona Constraints**: Output must be natively terminal-renderable. Strict omission of formalities, pleasantries, and conversational filler. Be direct, concise, and technical. Skip explanations for standard concepts.
+- **Language Features**: Use modern, safe C# features (e.g., `var`, primary constructors, file-scoped namespaces, extension syntax, collection expressions).
+- **Quality & Safety**: Strict immediate error handling. Always prioritize security and reliability. Use custom error domains. Never swallow errors.
+- **Formatting**:
+  - 4 spaces for C#, 2 spaces for XML/props/csproj.
+  - Types, constants, and non-field members are `PascalCase`.
+  - Interfaces begin with `I`.
+  - Private and internal fields (both instance and static) are `camelCase` and begin with `_`.
+  - `var` is preferred everywhere (built-in types, when apparent, and elsewhere).
+- **Git**: Use clear, concise, lowercase commit messages describing "what" changed (e.g., `add user caching`). Do NOT use Conventional Commits (no `feat:`, `fix:`). Preserve Git blame by applying minimal diffs. Never commit directly to protected branches.
 
-- **Target Framework**: .NET 10.0 (`net10.0`)
-- **Testing Frameworks**: None. There are no test projects in this repository.
-- **Major NuGet Dependencies**:
-  - `Microsoft.Extensions.Logging.Abstractions`
-  - `Tetractic.CodeAnalysis.ExceptionAnalyzers`
-- **Key Project Configuration**:
-  - Nullable reference types are enabled (`<Nullable>enable</Nullable>`).
-  - Implicit usings are enabled (`<ImplicitUsings>enable</ImplicitUsings>`).
-  - Compiler strict mode is enabled (`<Features>strict</Features>`).
-  - Nullable warnings are treated as errors (`<CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>` and `<WarningsAsErrors>nullable</WarningsAsErrors>`).
-  - Artifacts output format is enabled (`<UseArtifactsOutput>true</UseArtifactsOutput>`).
+## Testing Instructions
+- **Framework**: `xunit.v3.mtp-v2` (Microsoft Testing Platform).
+- **Structure**: Tests are split into `Integration`, `Unit`, and `Shared` projects under `/tests/`.
+- **Strategy**: Prioritize integration tests. Write table-driven unit tests. Aim for wide, reliable coverage. Write self-documenting code with comments explaining "why", not "what".
+- **Execution**: Use the `run-tests` skill to execute and debug tests (required for MTP). Use the `mtp-hot-reload` skill for rapid test iteration.
 
-## Architecture Boundaries
-
-The repository contains a single project (`src/Sibber.AppInstanceLock.csproj`) in the `src/` directory.
-
-- **Public API**:
-  - Define all public entry points, options, and enums in `src/InstanceLock.cs`.
-  - Expose the single-instance locking API via `InstanceLock<TMessage>`.
-- **Core Logic & Base Class**:
-  - Place shared, platform-agnostic IPC loop logic, Named Pipe reading/writing, and serialization in the abstract base class `src/InstanceLockImpl.cs`.
-- **Infrastructure & Platform Backends**:
-  - Place Windows-specific implementation details, such as mutex and named pipe creation, in `src/WindowsInstanceLock.cs`.
-  - Place Linux/macOS-specific implementation details, such as flock file locking, directory resolution, and P/Invoke declarations, in `src/UnixInstanceLock.cs`.
-- **Utilities**:
-  - Place auxiliary helper extensions in files dedicated to the type that the extensions are for, e.g., string sanitization in the file `src/StringExtensions.cs`.
-- **Solution Items**:
-  - Solution-wide settings reside in `.editorconfig` and `Directory.Build.props` in the root.
-
-## Coding Standards
-
-### Namespace Declarations
-- **Always** use file-scoped namespaces (e.g., `namespace Sibber.AppInstanceLock;`).
-- **Never** use block-scoped namespaces with curly braces `{}`.
-
-### Usings & Imports
-- **Always** leverage implicit usings.
-- **Never** add explicit using directives for namespaces that are already covered by implicit usings (such as `System`, `System.IO`, `System.Threading`).
-
-### Dependency Injection
-- **Always** use constructor injection to pass dependencies (such as `ILoggerFactory` or `ILogger`).
-- **Never** instantiate logger instances directly or use static service locators.
-
-### Logging Guidelines
-- **Always** inject `ILogger<T>` or `ILoggerFactory` into constructors to enable logging.
-- **Always** use structured logging with named placeholder arguments (e.g., `_logger?.LogInformation("Message details: {Param1}", param1);`).
-- **Never** use `Console.WriteLine` or `Console.Error.WriteLine` for application diagnostics.
-
-### Asynchronous Programming (async/await)
-- **Always** configure asynchronous await calls with `.ConfigureAwait(false)` (since this is library code) to avoid potential deadlock or other bugs in application that provide custom synchronization contexts.
-
-## Common Workflows
-
-### Build the Solution
-- Run the build command from the root directory:
-  ```powershell
-  dotnet build ./Sibber.AppInstanceLock.slnx
-  ```
-  *Note: Code style, nullable checks, and analyzers are executed during the build.*
-
-### Run Tests
-- **Never** execute test commands. There are no test projects or tests configured in this repository.
-
-### Database Migrations
-- **Never** run EF Core migration commands. Entity Framework is not used in this project.
+## Recommended Agent Skills
+When working on this project, proactively utilize these loaded skills:
+- `dotnet-pinvoke`: When reviewing or modifying `UnixInstanceLock.cs` or `WindowsInstanceLock.cs`.
+- `run-tests` & `mtp-hot-reload`: When executing test suites or fixing failing tests.
+- `test-anti-patterns`: When auditing test quality.
+- `microsoft-docs`: When referencing .NET APIs.

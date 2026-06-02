@@ -14,10 +14,10 @@ public sealed class ScopeBoundaryTests : IntegrationTestBase
     // All three scopes within the same process produce distinct lock names.
     // ──────────────────────────────────────────────────────────────────────
 
-    [Theory]
     [InlineData(InstanceLockScope.Session)]
     [InlineData(InstanceLockScope.User)]
     [InlineData(InstanceLockScope.Machine)]
+    [Theory]
     public void TryAcquire_EachScope_AcquiresSuccessfully(InstanceLockScope scope)
     {
         var appId = UniqueAppId();

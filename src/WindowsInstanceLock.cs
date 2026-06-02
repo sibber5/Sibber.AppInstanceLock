@@ -22,7 +22,10 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     private bool _ownsMutex;
 
     // this is only set if the lock scope is InstanceLockScope.User.
-    private WindowsIdentity? _wid;
+#if INCLUDE_TEST_HOOKS
+    internal static Func<string>? _userIdHook;
+    internal static Func<int>? _sessionIdHook;
+#endif
 
     /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
     /// <exception cref="InvalidOperationException">The current user's <see cref="SecurityIdentifier"/> could not be retrieved.</exception>
@@ -67,7 +70,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         security.AddAccessRule(_options.Scope switch
         {
             InstanceLockScope.Machine => new(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), MutexRights.Synchronize, AccessControlType.Allow),
-            InstanceLockScope.User or InstanceLockScope.Session => new((_wid ??= WindowsIdentity.GetCurrent()).User ?? throw new UnreachableException(), MutexRights.Synchronize, AccessControlType.Allow),
+            InstanceLockScope.User or InstanceLockScope.Session => new(new SecurityIdentifier(GetUserId()), MutexRights.Synchronize, AccessControlType.Allow),
             _ => throw new NotSupportedException($"{_options.Scope} is not a supported scope."),
         });
         return security;
@@ -147,14 +150,15 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
             if (_ownsMutex) try { _mutex.ReleaseMutex(); } catch { }
             _mutex.Dispose();
         }
-
-        _wid?.Dispose();
     }
 
     /// <exception cref="InvalidOperationException">The <see cref="SecurityIdentifier"/> for the current user was <see langword="null"/>.</exception>
     /// <inheritdoc cref="WindowsIdentity.GetCurrent()" path="/exception"/>
     private static string GetUserId()
     {
+#if INCLUDE_TEST_HOOKS
+        if (_userIdHook is not null) return _userIdHook();
+#endif
         using var id = WindowsIdentity.GetCurrent();
         var sid = id.User?.Value ?? throw new InvalidOperationException("Could not get current user SDDL");
         return sid;
@@ -163,6 +167,9 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     /// <inheritdoc cref="Process.SessionId" path="/exception"/>
     private static int GetSessionId()
     {
+#if INCLUDE_TEST_HOOKS
+        if (_sessionIdHook is not null) return _sessionIdHook();
+#endif
         using var proc = Process.GetCurrentProcess();
         return proc.SessionId;
     }

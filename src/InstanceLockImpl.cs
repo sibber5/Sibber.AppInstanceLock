@@ -305,6 +305,9 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                 var success = NotifyPipe(message, _options.NotificationRetryPolicy.ConnectionTimeout);
                 if (success) return;
 
+                // do not wait after the last attempt.
+                if (attempt == totalAttempts - 1) break;
+
                 if (_options.NotificationRetryPolicy.MaxJitterDelay <= TimeSpan.Zero) continue;
 
                 try

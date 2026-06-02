@@ -59,4 +59,51 @@ public sealed class StateIdempotencyTests : UnitTestBase
 
         Assert.Throws<OperationCanceledException>(() => primary.TryAcquire(cts.Token));
     }
+
+    [Fact]
+    public void TryAcquireOrNotify_SubsequentCallOnPrimary_ReturnsTrue_NoCallback()
+    {
+        var appId = UniqueAppId();
+        var callCount = 0;
+        using var primary = CreateLock<string>(appId, createMsg: () =>
+        {
+            callCount++;
+            return "msg";
+        }, onOtherInstance: _ => ValueTask.CompletedTask);
+
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        Assert.Equal(0, callCount); // not called because it's primary
+
+        // Subsequent calls
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        Assert.Equal(0, callCount);
+    }
+
+    [Fact]
+    public async Task TryAcquireOrNotify_SubsequentCallOnSecondary_ReturnsFalse_AndNotifies()
+    {
+        var appId = UniqueAppId();
+        var receivedCount = 0;
+        using var primary = CreateLock<string>(appId, createMsg: () => "msg", onOtherInstance: _ =>
+        {
+            // ReSharper disable once AccessToModifiedClosure
+            Interlocked.Increment(ref receivedCount);
+            return ValueTask.CompletedTask;
+        });
+        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        using var secondary = CreateLock<string>(appId, createMsg: () => "msg", onOtherInstance: _ => ValueTask.CompletedTask);
+
+        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+
+        // Wait for primary to process
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        Assert.Equal(1, Interlocked.CompareExchange(ref receivedCount, 0, 0));
+
+        // Subsequent call on secondary
+        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        Assert.Equal(2, Interlocked.CompareExchange(ref receivedCount, 0, 0));
+    }
 }

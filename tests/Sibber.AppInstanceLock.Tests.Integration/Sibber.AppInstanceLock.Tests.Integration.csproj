@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sibber.AppInstanceLock.csproj" AdditionalProperties="IncludeTestHooks=true" />
     <ProjectReference Include="..\Sibber.AppInstanceLock.Tests.Shared\Sibber.AppInstanceLock.Tests.Shared.csproj" />
+    <ProjectReference Include="..\Sibber.AppInstanceLock.TestHarness\Sibber.AppInstanceLock.TestHarness.csproj" />
   </ItemGroup>
 
 </Project>

@@ -5,6 +5,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
@@ -23,6 +24,11 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
     private FileStream? _lockFileStream;
     private bool _ownsLock;
+
+#if INCLUDE_TEST_HOOKS
+    internal static Func<uint>? _userIdHook;
+    internal static Func<string>? _sessionIdHook;
+#endif
 
     /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
     /// <exception cref="SecurityException"></exception>
@@ -260,6 +266,9 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     /// <exception cref="SecurityException">The caller is not authorized to retrieve the session ID.</exception>
     private static string GetSessionId()
     {
+#if INCLUDE_TEST_HOOKS
+        if (_sessionIdHook is not null) return _sessionIdHook();
+#endif
         // Get the Logon Session Identifier (Stable, Session-Specific)
         if (OperatingSystem.IsLinux())
         {
@@ -300,8 +309,15 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
         throw new UnreachableException($"Unexpected platform ({Environment.OSVersion.Platform}) in {nameof(GetSessionId)}().");
     }
+
+#if INCLUDE_TEST_HOOKS
+#pragma warning disable IDE1006 // Naming styles
+    private static uint getuid() => _userIdHook?.Invoke() ?? PInvoke.getuid();
+#pragma warning restore IDE1006
+#endif
 }
 
+[SuppressMessage("Security", "CA5392:Use DefaultDllImportSearchPaths attribute for P/Invokes", Justification = "These are Unix APIs.")]
 internal static partial class PInvoke
 {
     // P/Invoke flock flags
@@ -317,8 +333,6 @@ internal static partial class PInvoke
     // public const int ErrSessionInvalidAttributes = -60501;
     public const int ErrSessionAuthorizationDenied = -60502;
 
-#pragma warning disable CA5392 // Use DefaultDLLImportSearchPaths attribute for P/Invokes.
-
     [LibraryImport("libc", SetLastError = true)]
     public static partial int flock(int fd, int operation);
 
@@ -327,6 +341,4 @@ internal static partial class PInvoke
 
     [LibraryImport("/System/Library/Frameworks/Security.framework/Security", SetLastError = false)]
     public static partial int SessionGetInfo(uint session, out uint sessionId, nint pAttributes); // pAttributes is nullable.
-
-#pragma warning restore CA5392
 }

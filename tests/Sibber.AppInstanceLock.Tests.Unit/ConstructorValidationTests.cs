@@ -52,4 +52,54 @@ public sealed class ConstructorValidationTests : UnitTestBase
         Assert.Throws<ArgumentNullException>(() =>
             new InstanceLock<string>("valid-id", onOtherInstanceOpened: _ => ValueTask.CompletedTask));
     }
+
+    [InlineData(-1, 10, 10)]
+    [InlineData(10, -1, 10)]
+    [InlineData(10, 10, -1)]
+    [Theory]
+    public void NotificationRetryPolicy_NegativeValues_Throws(int attempts, int jitter, int timeout)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new NotificationRetryPolicy(
+            RetryAttempts: attempts,
+            MaxJitterDelay: TimeSpan.FromMilliseconds(jitter),
+            ConnectionTimeout: TimeSpan.FromMilliseconds(timeout)));
+    }
+
+    [InlineData(-1, 10, 10, 10)]
+    [InlineData(10, -1, 10, 10)]
+    [InlineData(10, 10, -1, 10)]
+    [InlineData(10, 10, 10, -2)]
+    [Theory]
+    public void InstanceServerRetryPolicy_NegativeValues_Throws(int uptime, int baseDelay, int maxDelay, int retries)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new InstanceServerRetryPolicy(
+            MinimumUptime: TimeSpan.FromMilliseconds(uptime),
+            BaseDelay: TimeSpan.FromMilliseconds(baseDelay),
+            MaxDelay: TimeSpan.FromMilliseconds(maxDelay),
+            MaxRetries: retries));
+    }
+
+    [Fact]
+    public void InstanceServerRetryPolicy_MaxDelayLessThanBaseDelay_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new InstanceServerRetryPolicy(
+            MinimumUptime: TimeSpan.FromSeconds(1),
+            BaseDelay: TimeSpan.FromMilliseconds(100),
+            MaxDelay: TimeSpan.FromMilliseconds(50)));
+    }
+
+    [Fact]
+    public void BackendLock_InvalidScope_Throws()
+    {
+        var options = new InstanceLockOptions { Scope = (InstanceLockScope)99 };
+
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Throws<NotSupportedException>(() => new WindowsInstanceLock<string>("test-id", options, null));
+        }
+        else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+        {
+            Assert.Throws<NotSupportedException>(() => new UnixInstanceLock<string>("test-id", options, null));
+        }
+    }
 }
