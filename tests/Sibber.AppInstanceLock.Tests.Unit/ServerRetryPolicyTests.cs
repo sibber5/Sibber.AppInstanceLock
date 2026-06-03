@@ -56,11 +56,11 @@ public sealed class ServerRetryPolicyTests : UnitTestBase
 
         sw.Stop();
 
-        Assert.Equal(expectedThrows, backend.ThrowCount);
+        backend.ThrowCount.ShouldBe(expectedThrows);
 
         // Account for thread scheduling overhead (e.g., allow ~20ms minimum for 0 delay if 0 retries isn't instant, though it should be fast).
         // Since xUnit can be slightly unpredictable, we use a small tolerance buffer for the lower bound.
-        Assert.True(sw.ElapsedMilliseconds >= Math.Max(0, expectedDelayMs - 30), $"Elapsed too short: {sw.ElapsedMilliseconds}ms (Expected >= {expectedDelayMs})");
-        Assert.True(sw.ElapsedMilliseconds < expectedDelayMs + 2000, $"Elapsed too long: {sw.ElapsedMilliseconds}ms");
+        (sw.ElapsedMilliseconds >= Math.Max(0, expectedDelayMs - 30)).ShouldBeTrue($"Elapsed too short: {sw.ElapsedMilliseconds}ms (Expected >= {expectedDelayMs})");
+        (sw.ElapsedMilliseconds < expectedDelayMs + 2000).ShouldBeTrue($"Elapsed too long: {sw.ElapsedMilliseconds}ms");
     }
 }

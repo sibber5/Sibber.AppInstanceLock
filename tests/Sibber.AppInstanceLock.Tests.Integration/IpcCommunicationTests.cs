@@ -39,17 +39,17 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
                 return ValueTask.CompletedTask;
             });
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         var secondary = CreateLock(
             appId,
             createMsg: () => expected,
             onOtherInstance: _ => ValueTask.CompletedTask);
 
-        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
 
         var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
-        Assert.Equal(expected, received);
+        received.ShouldBe(expected);
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
                 return ValueTask.CompletedTask;
             });
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         var secondary = new InstanceLock<byte>(
             appId,
@@ -81,10 +81,10 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             onOtherInstanceOpened: _ => ValueTask.CompletedTask);
         _disposables.Add(secondary);
 
-        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
 
         var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
-        Assert.Equal(expected, received);
+        received.ShouldBe(expected);
     }
 
     [Fact]
@@ -103,7 +103,7 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             });
         _disposables.Add(primary);
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         var secondary = new InstanceLock<bool>(
             appId,
@@ -111,10 +111,10 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             onOtherInstanceOpened: _ => ValueTask.CompletedTask);
         _disposables.Add(secondary);
 
-        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
 
         var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
-        Assert.True(received);
+        received.ShouldBeTrue();
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -142,7 +142,7 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
                 return ValueTask.CompletedTask;
             });
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         for (var i = 0; i < Count; i++)
         {
@@ -151,7 +151,7 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
                 appId,
                 createMsg: () => $"msg-{idx}",
                 onOtherInstance: _ => ValueTask.CompletedTask);
-            Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+            secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
             secondary.Dispose();
 
             // brief pause to let the pipe server cycle between connections
@@ -160,10 +160,10 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
 
         await allReceived.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
 
-        Assert.Equal(Count, received.Count);
+        received.Count.ShouldBe(Count);
         for (var i = 0; i < Count; i++)
         {
-            Assert.Contains($"msg-{i}", received);
+            received.ShouldContain($"msg-{i}");
         }
     }
 
@@ -198,7 +198,7 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             options: options);
 
         // Primary acquires lock and starts server.
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         // Secondary runs concurrently ─ the pipe server is already started, but the
         // notification retry policy handles the inherent race between
@@ -214,7 +214,7 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         }, TestContext.Current.CancellationToken);
 
         var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
-        Assert.Equal("retry-delivery", received);
+        received.ShouldBe("retry-delivery");
 
         await secondaryTask.WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
     }
@@ -242,11 +242,11 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
                 return ValueTask.CompletedTask;
             });
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         // first secondary triggers the throw
         var s1 = CreateLock(appId, () => "first", _ => ValueTask.CompletedTask);
-        Assert.False(s1.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        s1.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
         s1.Dispose();
 
         // allow pipe server to cycle back to WaitForConnectionAsync
@@ -254,11 +254,11 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
 
         // second secondary should still be handled
         var s2 = CreateLock(appId, () => "second", _ => ValueTask.CompletedTask);
-        Assert.False(s2.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        s2.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
 
         var received = await secondMessageTcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
-        Assert.Equal("second", received);
-        Assert.True(callCount >= 2);
+        received.ShouldBe("second");
+        (callCount >= 2).ShouldBeTrue();
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -288,7 +288,7 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             },
             options: options);
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         // Trigger a server-side exception by connecting and sending a malformed length header
         // that indicates a message larger than 1 MiB, causing InvalidOperationException.
@@ -305,7 +305,7 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
 
         // onServerException should have been called
         var ex2 = await exceptionSeen.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
-        Assert.IsType<InvalidOperationException>(ex2);
+        ex2.ShouldBeOfType<InvalidOperationException>();
 
         // The server loop should have completed (no fault on the returned task).
         await AwaitServerLoopAsync(primary, TimeSpan.FromSeconds(5));
@@ -313,8 +313,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         var serverTask = primary._pipeServerLoopTask;
         if (serverTask is not null)
         {
-            Assert.True(serverTask.IsCompleted);
-            Assert.False(serverTask.IsFaulted);
+            serverTask.IsCompleted.ShouldBeTrue();
+            serverTask.IsFaulted.ShouldBeFalse();
         }
     }
 
@@ -328,11 +328,11 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
     {
         var appId = UniqueAppId();
         var primary = CreateLock<string>(appId);
-        Assert.True(primary.TryAcquire(TestContext.Current.CancellationToken));
+        primary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         // secondary with no IPC callbacks ─ should silently return false
         var secondary = CreateLock<string>(appId);
-        Assert.False(secondary.TryAcquire(TestContext.Current.CancellationToken));
+        secondary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeFalse();
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -353,11 +353,11 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
 
         // no IPC callbacks → no server task
         var primary = CreateLock<string>(appId);
-        Assert.True(primary.TryAcquire(TestContext.Current.CancellationToken));
+        primary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         var serverTask = primary._pipeServerLoopTask;
 
-        Assert.Null(serverTask);
+        serverTask.ShouldBeNull();
     }
 
     [Fact]
@@ -370,12 +370,12 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             createMsg: () => "x",
             onOtherInstance: _ => ValueTask.CompletedTask);
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         var serverTask = primary._pipeServerLoopTask;
 
-        Assert.NotNull(serverTask);
-        Assert.False(serverTask.IsCompleted);
+        serverTask.ShouldNotBeNull();
+        serverTask.IsCompleted.ShouldBeFalse();
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -392,7 +392,7 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             createMsg: () => "x",
             onOtherInstance: _ => ValueTask.CompletedTask);
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         // Server is now blocked on WaitForConnectionAsync. Dispose should cancel it.
         primary.Dispose();
@@ -403,8 +403,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         var serverTask = primary._pipeServerLoopTask;
         if (serverTask is not null)
         {
-            Assert.True(serverTask.IsCompleted);
-            Assert.False(serverTask.IsFaulted);
+            serverTask.IsCompleted.ShouldBeTrue();
+            serverTask.IsFaulted.ShouldBeFalse();
         }
     }
 }

@@ -1,12 +1,19 @@
 ---
-description: 'Suggests using Microsoft Testing Platform (MTP) hot reload to iterate fixes on failing tests without rebuilding. Use when user says "hot reload tests", "iterate on test fix", "run tests without rebuilding", "speed up test loop", "fix test faster", or needs to set up MTP hot reload to rapidly iterate on test failures. Covers setup (NuGet package, environment variable, launchSettings.json) and the iterative workflow for fixing tests. DO NOT USE FOR: writing test code, diagnosing test failures, running tests normally with dotnet test (use run-tests), applying test filters, producing TRX reports, CI/CD pipeline configuration, or Visual Studio Test Explorer hot reload (which is a different feature).'
-metadata:
-    github-path: plugins/dotnet-test/skills/mtp-hot-reload
-    github-ref: refs/tags/v1.0.0
-    github-repo: https://github.com/dotnet/skills
-    github-tree-sha: 23208ab01f89be5b56a268aac613c34510dbe139
 name: mtp-hot-reload
+description: >
+  Suggests using Microsoft Testing Platform (MTP) hot reload to iterate fixes
+  on failing tests without rebuilding. Use when user says "hot reload tests",
+  "iterate on test fix", "run tests without rebuilding", "speed up test loop",
+  "fix test faster", or needs to set up MTP hot reload to rapidly iterate on
+  test failures. Covers setup (NuGet package, environment variable,
+  launchSettings.json) and the iterative workflow for fixing tests.
+  DO NOT USE FOR: writing test code, diagnosing test failures, running tests
+  normally with dotnet test (use run-tests), applying test filters, producing
+  TRX reports, CI/CD pipeline configuration, or Visual Studio Test Explorer
+  hot reload (which is a different feature).
+license: MIT
 ---
+
 # MTP Hot Reload for Iterative Test Fixing
 
 Set up and use Microsoft Testing Platform hot reload to rapidly iterate fixes on failing tests without rebuilding between each change.

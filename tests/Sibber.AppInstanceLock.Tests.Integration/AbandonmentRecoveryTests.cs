@@ -30,7 +30,7 @@ public sealed class AbandonmentRecoveryTests : IntegrationTestBase
             CreateNoWindow = true
         };
         var p = Process.Start(psi);
-        Assert.NotNull(p);
+        p.ShouldNotBeNull();
         return p;
     }
 
@@ -45,7 +45,7 @@ public sealed class AbandonmentRecoveryTests : IntegrationTestBase
         {
             // Wait for ACQUIRED
             var line = await p1.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
-            Assert.Equal("ACQUIRED", line);
+            line.ShouldBe("ACQUIRED");
 
             // Forcefully terminate Process 1 (Crash / SIGKILL)
             p1.Kill(entireProcessTree: true);
@@ -56,7 +56,7 @@ public sealed class AbandonmentRecoveryTests : IntegrationTestBase
             try
             {
                 var line2 = await p2.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
-                Assert.Equal("ACQUIRED", line2);
+                line2.ShouldBe("ACQUIRED");
             }
             finally
             {

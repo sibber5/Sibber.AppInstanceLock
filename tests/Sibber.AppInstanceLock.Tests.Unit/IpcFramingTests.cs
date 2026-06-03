@@ -13,7 +13,7 @@ public sealed class IpcFramingTests : UnitTestBase
     {
         var appId = UniqueAppId();
         using var primary = CreateLock<string>(appId, createMsg: () => "", onOtherInstance: _ => ValueTask.CompletedTask);
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         // The JSON serialization wraps the string in quotes ("...").
         // 1 MiB = 1,048,576 bytes.
@@ -21,7 +21,7 @@ public sealed class IpcFramingTests : UnitTestBase
         var maxPayload = new string('A', 1_048_574);
         using var secondary = CreateLock<string>(appId, createMsg: () => maxPayload, onOtherInstance: _ => ValueTask.CompletedTask);
 
-        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
     }
 
     [Fact]
@@ -29,14 +29,14 @@ public sealed class IpcFramingTests : UnitTestBase
     {
         var appId = UniqueAppId();
         using var primary = CreateLock<string>(appId, createMsg: () => "", onOtherInstance: _ => ValueTask.CompletedTask);
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         var tooLargePayload = new string('A', 1048575); // 1048575 + 2 = 1048577 bytes
         using var secondary = CreateLock<string>(appId, createMsg: () => tooLargePayload, onOtherInstance: _ => ValueTask.CompletedTask);
 
         // ReSharper disable once AccessToDisposedClosure
         var ex = Record.Exception(() => secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
-        Assert.IsType<ArgumentException>(ex);
+        ex.ShouldBeOfType<ArgumentException>();
     }
 
     [Fact]
@@ -46,19 +46,19 @@ public sealed class IpcFramingTests : UnitTestBase
         var received = false;
         using var primary = CreateLock<string>(appId, createMsg: () => "", onOtherInstance: b =>
         {
-            Assert.Equal("", b);
+            b.ShouldBe("");
             received = true;
             return ValueTask.CompletedTask;
         });
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         var zeroPayload = "";
         using var secondary = CreateLock<string>(appId, createMsg: () => zeroPayload, onOtherInstance: _ => ValueTask.CompletedTask);
 
-        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
 
         // Wait for primary to process
         await Task.Delay(100, TestContext.Current.CancellationToken);
-        Assert.True(received);
+        received.ShouldBeTrue();
     }
 }

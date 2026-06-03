@@ -31,7 +31,7 @@ public sealed class CrossProcessIpcTests : IntegrationTestBase
             CreateNoWindow = true
         };
         var p = Process.Start(psi);
-        Assert.NotNull(p);
+        p.ShouldNotBeNull();
         return p;
     }
 
@@ -45,16 +45,16 @@ public sealed class CrossProcessIpcTests : IntegrationTestBase
         try
         {
             var line = await p1.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
-            Assert.Equal("ACQUIRED", line);
+            line.ShouldBe("ACQUIRED");
 
             using var p2 = StartHarness(appId, "--message \"Hello_From_P2\"");
             try
             {
                 var line2 = await p2.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
-                Assert.Equal("NOT_PRIMARY", line2);
+                line2.ShouldBe("NOT_PRIMARY");
 
                 var msgLine = await p1.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
-                Assert.Equal("RECEIVED_MESSAGE:Hello_From_P2", msgLine);
+                msgLine.ShouldBe("RECEIVED_MESSAGE:Hello_From_P2");
             }
             finally
             {
@@ -87,12 +87,12 @@ public sealed class CrossProcessIpcTests : IntegrationTestBase
             var results = await Task.WhenAll(p1Task, p2Task).WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
 
             // One must be ACQUIRED, the other NOT_PRIMARY
-            Assert.Contains("ACQUIRED", results);
-            Assert.Contains("NOT_PRIMARY", results);
+            results.ShouldContain("ACQUIRED");
+            results.ShouldContain("NOT_PRIMARY");
 
             // The one that is listening (p1) should receive the message
             var msgLine = await p1.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
-            Assert.Equal("RECEIVED_MESSAGE:ColdStart", msgLine);
+            msgLine.ShouldBe("RECEIVED_MESSAGE:ColdStart");
         }
         finally
         {

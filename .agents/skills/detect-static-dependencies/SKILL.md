@@ -1,12 +1,18 @@
 ---
-description: 'Scan C# source files for hard-to-test static dependencies — DateTime.Now/UtcNow, File.*, Directory.*, Environment.*, HttpClient, Console.*, Process.*, and other untestable statics. Produces a ranked report of static call sites by frequency. USE FOR: find untestable statics, scan for static dependencies, testability audit, identify hard-to-mock code, find DateTime.Now usage, detect static coupling, testability report, static analysis for testability. DO NOT USE FOR: generating wrappers (use generate-testability-wrappers), migrating code (use migrate-static-to-wrapper), general code review, or finding statics that are already behind abstractions.'
-metadata:
-    github-path: plugins/dotnet-test/skills/detect-static-dependencies
-    github-ref: refs/tags/v1.0.0
-    github-repo: https://github.com/dotnet/skills
-    github-tree-sha: ab5fd93bd2c58acf1024aea42e4ca1ddf5da69fd
 name: detect-static-dependencies
+description: >
+  Scan C# source files for hard-to-test static dependencies — DateTime.Now/UtcNow,
+  File.*, Directory.*, Environment.*, HttpClient, Console.*, Process.*, and other
+  untestable statics. Produces a ranked report of static call sites by frequency.
+  USE FOR: find untestable statics, scan for static dependencies, testability audit,
+  identify hard-to-mock code, find DateTime.Now usage, detect static coupling,
+  testability report, static analysis for testability.
+  DO NOT USE FOR: generating wrappers (use generate-testability-wrappers),
+  migrating code (use migrate-static-to-wrapper), general code review,
+  or finding statics that are already behind abstractions.
+license: MIT
 ---
+
 # Detect Static Dependencies
 
 Scan a C# codebase for calls to hard-to-test static APIs and produce a ranked report showing which statics appear most frequently, which files are most affected, and which abstractions already exist in the .NET ecosystem to replace them.
@@ -17,6 +23,12 @@ Scan a C# codebase for calls to hard-to-test static APIs and produce a ranked re
 - Understanding the scope of static coupling in a legacy codebase
 - Prioritizing which statics to wrap first (highest-frequency wins)
 - Creating a migration plan for incremental testability improvements
+
+## Response Guidelines
+
+- Scale the response to the user's request. A question about a specific category (e.g., "find time statics") should focus on that category with file locations and counts, not produce a full report across all categories.
+- When the user provides a specific file or directory path, scan only that scope — do not expand to the entire solution unless asked.
+- The full structured report format in Step 4 is for comprehensive audit requests. For focused questions, return only the relevant subset (e.g., category summary + affected files for the requested category).
 
 ## When Not to Use
 

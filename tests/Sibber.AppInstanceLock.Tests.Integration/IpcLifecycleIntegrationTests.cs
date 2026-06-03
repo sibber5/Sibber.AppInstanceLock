@@ -27,27 +27,27 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         backend.OnBeforePipeCtsLock = () => tcs.TrySetResult();
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         // give it a moment to enter the lock and assign _pipeCts
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
-        Assert.NotNull(backend._pipeCts);
+        backend._pipeCts.ShouldNotBeNull();
 
         primary.Dispose();
 
         // _pipeCts should be null or canceled
         if (backend._pipeCts != null)
         {
-            Assert.True(backend._pipeCts.Token.IsCancellationRequested);
+            backend._pipeCts.Token.IsCancellationRequested.ShouldBeTrue();
         }
 
         // Wait for server loop task to complete gracefully
         if (primary._pipeServerLoopTask is { } serverTask)
         {
             await serverTask.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-            Assert.True(serverTask.IsCompletedSuccessfully);
+            serverTask.IsCompletedSuccessfully.ShouldBeTrue();
         }
     }
 
@@ -79,7 +79,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         // We call TryAcquirePrimary directly to set it as primary,
         // then RunServerLoop to trigger the task.
         var isPrimary = (bool)backend.GetType().GetMethod("TryAcquirePrimary", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(backend, null)!;
-        Assert.True(isPrimary);
+        isPrimary.ShouldBeTrue();
 
         var serverTask = backend.RunServerLoop(_ => ValueTask.CompletedTask, null, CancellationToken.None);
 
@@ -90,7 +90,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
 
         // Assert no CancellationTokenSource was leaked because Dispose set _disposed = true
         // and the double-check inside lock (_pipeCtsLock) saw it.
-        Assert.Null(backend._pipeCts);
+        backend._pipeCts.ShouldBeNull();
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         backend.OnBeforePipeCtsLock = () => tcs.TrySetResult();
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await Task.Delay(100, TestContext.Current.CancellationToken);
@@ -133,7 +133,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
 
         await Task.WhenAll(serverTask!, disposeTask).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
-        Assert.Null(backend._pipeCts);
+        backend._pipeCts.ShouldBeNull();
     }
 
     [Fact]
@@ -144,7 +144,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
 
         var backend = primary._backend;
         var isPrimary = (bool)backend.GetType().GetMethod("TryAcquirePrimary", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(backend, null)!;
-        Assert.True(isPrimary);
+        isPrimary.ShouldBeTrue();
 
         var numThreads = 10;
         using var startEvent = new ManualResetEventSlim(false);
@@ -177,7 +177,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
 
         // After exit, _pipeCts is null because the loop cleans it up in the finally block.
         // Or wait, if the tasks complete, the finally block runs and sets _pipeCts to null.
-        Assert.Null(backend._pipeCts);
+        backend._pipeCts.ShouldBeNull();
     }
 
     [Fact]
@@ -186,7 +186,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         var appId = UniqueAppId();
         var primary = CreateLock(appId, () => "test", _ => ValueTask.CompletedTask);
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         var numThreads = 10;
         using var startEvent = new ManualResetEventSlim(false);
@@ -205,7 +205,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         startEvent.Set();
         await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
-        Assert.Null(primary._backend._pipeCts);
+        primary._backend._pipeCts.ShouldBeNull();
     }
 
     [Fact]
@@ -216,8 +216,8 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
 
         primary.Dispose();
 
-        Assert.Throws<ObjectDisposedException>(() => primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        Should.Throw<ObjectDisposedException>(() => primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
 
-        await Assert.ThrowsAsync<ObjectDisposedException>(async () => await primary._backend.RunServerLoop(_ => ValueTask.CompletedTask, null, CancellationToken.None));
+        await Should.ThrowAsync<ObjectDisposedException>(async () => await primary._backend.RunServerLoop(_ => ValueTask.CompletedTask, null, CancellationToken.None));
     }
 }

@@ -23,7 +23,7 @@ public sealed class InstanceConcurrencyTests : IntegrationTestBase
 
         var result = primary.TryAcquire(TestContext.Current.CancellationToken);
 
-        Assert.True(result);
+        result.ShouldBeTrue();
     }
 
     [Fact]
@@ -36,8 +36,8 @@ public sealed class InstanceConcurrencyTests : IntegrationTestBase
         var firstResult = primary.TryAcquire(TestContext.Current.CancellationToken);
         var secondResult = secondary.TryAcquire(TestContext.Current.CancellationToken);
 
-        Assert.True(firstResult);
-        Assert.False(secondResult);
+        firstResult.ShouldBeTrue();
+        secondResult.ShouldBeFalse();
     }
 
     [Fact]
@@ -45,12 +45,12 @@ public sealed class InstanceConcurrencyTests : IntegrationTestBase
     {
         var appId = UniqueAppId();
         var primary = CreateLock<string>(appId);
-        Assert.True(primary.TryAcquire(TestContext.Current.CancellationToken));
+        primary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
         primary.Dispose();
 
         var newPrimary = CreateLock<string>(appId);
 
-        Assert.True(newPrimary.TryAcquire(TestContext.Current.CancellationToken));
+        newPrimary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ public sealed class InstanceConcurrencyTests : IntegrationTestBase
         await Task.WhenAll(t1, t2);
 
         // Exactly one is true, exactly one is false.
-        Assert.Single(results, r => r);
-        Assert.Single(results, r => !r);
+        results.Count(r => r).ShouldBe(1);
+        results.Count(r => !r).ShouldBe(1);
     }
 }

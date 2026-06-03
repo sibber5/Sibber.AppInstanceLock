@@ -14,11 +14,11 @@ public sealed class StateIdempotencyTests : UnitTestBase
     {
         var appId = UniqueAppId();
         var primary = CreateLock<string>(appId);
-        Assert.True(primary.TryAcquire(TestContext.Current.CancellationToken));
+        primary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         // Subsequent calls to TryAcquire on the same instance should immediately return true.
-        Assert.True(primary.TryAcquire(TestContext.Current.CancellationToken));
-        Assert.True(primary.TryAcquire(TestContext.Current.CancellationToken));
+        primary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
+        primary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
     }
 
     [Fact]
@@ -26,7 +26,7 @@ public sealed class StateIdempotencyTests : UnitTestBase
     {
         var appId = UniqueAppId();
         var primary = CreateLock<string>(appId);
-        Assert.True(primary.TryAcquire(TestContext.Current.CancellationToken));
+        primary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         // multiple disposes must not throw
         primary.Dispose();
@@ -41,7 +41,7 @@ public sealed class StateIdempotencyTests : UnitTestBase
         var primary = CreateLock<string>(appId);
         primary.Dispose();
 
-        Assert.Throws<ObjectDisposedException>(() => primary.TryAcquire(TestContext.Current.CancellationToken));
+        Should.Throw<ObjectDisposedException>(() => primary.TryAcquire(TestContext.Current.CancellationToken));
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ public sealed class StateIdempotencyTests : UnitTestBase
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        Assert.Throws<OperationCanceledException>(() => primary.TryAcquire(cts.Token));
+        Should.Throw<OperationCanceledException>(() => primary.TryAcquire(cts.Token));
     }
 
     [Fact]
@@ -71,13 +71,13 @@ public sealed class StateIdempotencyTests : UnitTestBase
             return "msg";
         }, onOtherInstance: _ => ValueTask.CompletedTask);
 
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
-        Assert.Equal(0, callCount); // not called because it's primary
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
+        callCount.ShouldBe(0); // not called because it's primary
 
         // Subsequent calls
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
-        Assert.Equal(0, callCount);
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
+        callCount.ShouldBe(0);
     }
 
     [Fact]
@@ -91,19 +91,19 @@ public sealed class StateIdempotencyTests : UnitTestBase
             Interlocked.Increment(ref receivedCount);
             return ValueTask.CompletedTask;
         });
-        Assert.True(primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         using var secondary = CreateLock<string>(appId, createMsg: () => "msg", onOtherInstance: _ => ValueTask.CompletedTask);
 
-        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
 
         // Wait for primary to process
         await Task.Delay(100, TestContext.Current.CancellationToken);
-        Assert.Equal(1, Interlocked.CompareExchange(ref receivedCount, 0, 0));
+        Interlocked.CompareExchange(ref receivedCount, 0, 0).ShouldBe(1);
 
         // Subsequent call on secondary
-        Assert.False(secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
+        secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
         await Task.Delay(100, TestContext.Current.CancellationToken);
-        Assert.Equal(2, Interlocked.CompareExchange(ref receivedCount, 0, 0));
+        Interlocked.CompareExchange(ref receivedCount, 0, 0).ShouldBe(2);
     }
 }

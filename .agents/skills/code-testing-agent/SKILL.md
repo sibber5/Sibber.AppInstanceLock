@@ -1,12 +1,23 @@
 ---
-description: 'Generates comprehensive, workable unit tests for any programming language using a multi-agent pipeline. Use when asked to generate tests, write unit tests, improve test coverage, add test coverage, or create test files. Supports C#, TypeScript, JavaScript, Python, Go, Rust, Java, and more. Orchestrates research, planning, and implementation phases to produce tests that compile, pass, and follow project conventions. DO NOT USE FOR: running existing tests, executing dotnet test, applying test filters, detecting test platforms, or troubleshooting test execution (use run-tests for all of these).'
-metadata:
-    github-path: plugins/dotnet-test/skills/code-testing-agent
-    github-ref: refs/tags/v1.0.0
-    github-repo: https://github.com/dotnet/skills
-    github-tree-sha: 36ec1869f49c19b8862ef158e479fed5e0619cd6
 name: code-testing-agent
+description: >-
+  Generates and writes new unit tests for any programming language using a
+  Research-Plan-Implement pipeline. Use when asked to generate tests,
+  write unit tests, add tests, improve test coverage, create test
+  project, achieve high coverage, comprehensive tests, or asked to
+  scaffold a new test project for an app, service, or library. Supports
+  C#, TypeScript, JavaScript, Python, Go, Rust, Java, and more. Orchestrates
+  the code-testing-generator sub-agent through research, planning, and
+  implementation phases so tests compile, pass, and follow project
+  conventions. DO NOT USE FOR: running existing tests or test filters
+  (use run-tests); diagnosing coverage plateaus or project-wide
+  coverage/CRAP analysis without writing tests (use coverage-analysis);
+  targeted method/class CRAP scores (use crap-score); MSTest assertion
+  guidance, MSTest test pattern modernization, or fixing existing MSTest test
+  code (use writing-mstest-tests).
+license: MIT
 ---
+
 # Code Testing Generation Skill
 
 An AI-powered skill that generates comprehensive, workable unit tests for any programming language using a coordinated multi-agent pipeline.
@@ -130,23 +141,37 @@ All pipeline state is stored in `.testagent/` folder:
 
 ## Examples
 
-### Example 1: Full Project Testing
+### Strategy Selection
 
-```text
-Generate unit tests for my Calculator project at C:\src\Calculator
-```
+The generator picks a strategy based on request scope:
 
-### Example 2: Specific File Testing
+| User Request | Strategy | Why |
+|---|---|---|
+| "Generate tests for `src/services/UserService.ts`" | **Direct** | Single file, small scope — write tests immediately, skip sub-agents |
+| "Add unit tests for my billing project" | **Single pass** | Moderate scope — one Research → Plan → Implement cycle covers it |
+| "Achieve 80% coverage across the entire solution" | **Iterative** | Large scope — multiple R→P→I cycles, each narrowing remaining gaps |
 
-```text
-Generate unit tests for src/services/UserService.ts
-```
+### Pipeline Walkthrough
 
-### Example 3: Targeted Coverage
+Given a request like *"Generate unit tests for my InvoiceService"*, the pipeline produces:
 
-```text
-Add tests for the authentication module with focus on edge cases
-```
+1. **Research** → `.testagent/research.md` containing detected language/framework, build commands, files to test ranked by priority, and existing test inventory
+2. **Plan** → `.testagent/plan.md` containing phased approach with specific methods and test scenarios (happy path, edge cases, error cases) for each file
+3. **Implement** → Test files written, built, and verified per phase. Fix cycle runs automatically if build/test errors occur
+4. **Validate** → Full workspace build + full test run to catch cross-project issues
+5. **Report** → Summary of tests created, pass/fail counts, coverage notes, and next steps
+
+### Language-Specific Examples
+
+The `code-testing-extensions` skill provides concrete, filled-in examples for each pipeline phase showing real source code, real research output, real plans, and real generated tests. Call the `code-testing-extensions` skill to discover available extension files, then read:
+
+- **`dotnet-examples.md`** — MSTest example with InvoiceService: research output, plan output, generated test file, fix cycle walkthrough, and final report
+- **`python-examples.md`** — pytest example with the same InvoiceService scenario: research, plan, generated test file (parametrized, `unittest.mock`), fix cycles (`ModuleNotFoundError`, patch target, `Mock(spec=...)`), and final report
+- **`typescript-examples.md`** — Vitest example (also applicable to Jest) showing `it.each` parameterization, async tests, fake timers, and ESM/CJS fix cycles
+- **`go-examples.md`** — Standard `testing` package example with table-driven subtests, hand-written fake repository, injected clock, and `-run` regex fix cycle
+- **`java-examples.md`** — JUnit 5 + Mockito example on Maven showing `@ExtendWith(MockitoExtension.class)`, `@ParameterizedTest` + `@CsvSource`, `Clock.fixed(...)` for time, and Surefire fix cycles
+
+For languages without a dedicated examples file (Rust, Ruby, Swift, Kotlin, C++, PowerShell), use the base extension file (`<language>.md`) plus the example file for the closest paradigm — the pipeline shape (research → plan → generate → fix) and the categories of decisions (test layout, mocking strategy, fixed clock for time-dependent code, parameterization style) translate directly.
 
 ## Agent Reference
 
@@ -171,7 +196,7 @@ Add tests for the authentication module with focus on edge cases
 
 ### Tests don't compile
 
-The `code-testing-fixer` agent will attempt to resolve compilation errors. Check `.testagent/plan.md` for the expected test structure. Check the `extensions/` folder for language-specific error code references (e.g., `extensions/dotnet.md` for .NET).
+The `code-testing-fixer` agent will attempt to resolve compilation errors. Check `.testagent/plan.md` for the expected test structure. Call the `code-testing-extensions` skill and read the language-specific extension file for error code references (e.g., `dotnet.md` for .NET).
 
 ### Tests fail
 

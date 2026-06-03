@@ -14,7 +14,7 @@ public sealed class ConstructorValidationTests : UnitTestBase
     // ──────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Constructor_NullAppId_Throws() => Assert.Throws<ArgumentNullException>(() => new InstanceLock<string>(null!));
+    public void Constructor_NullAppId_Throws() => Should.Throw<ArgumentNullException>(() => new InstanceLock<string>(null!));
 
     [Fact]
     public void Constructor_EmptyAppId_DoesNotThrowInConstructor()
@@ -23,33 +23,33 @@ public sealed class ConstructorValidationTests : UnitTestBase
         // for empty strings. This test documents that behavior ─ empty strings are not
         // rejected at construction time.
         var ex = Record.Exception(() => new InstanceLock<string>(""));
-        Assert.Null(ex);
+        ex.ShouldBeNull();
     }
 
     [Fact]
     public void Constructor_InvalidCharsInAppId_Throws()
     {
-        Assert.Throws<ArgumentException>(() => new InstanceLock<string>("my.app"));
-        Assert.Throws<ArgumentException>(() => new InstanceLock<string>("my app"));
-        Assert.Throws<ArgumentException>(() => new InstanceLock<string>("app/id"));
+        Should.Throw<ArgumentException>(() => new InstanceLock<string>("my.app"));
+        Should.Throw<ArgumentException>(() => new InstanceLock<string>("my app"));
+        Should.Throw<ArgumentException>(() => new InstanceLock<string>("app/id"));
     }
 
     [Fact]
     public void Constructor_AppIdTooLong_Throws()
     {
         var tooLong = new string('a', 256);
-        Assert.Throws<ArgumentOutOfRangeException>(() => new InstanceLock<string>(tooLong));
+        Should.Throw<ArgumentOutOfRangeException>(() => new InstanceLock<string>(tooLong));
     }
 
     [Fact]
     public void Constructor_OnlyOneMsgCallbackProvided_Throws()
     {
         // createMsg without onOtherInstance
-        Assert.Throws<ArgumentNullException>(() =>
+        Should.Throw<ArgumentNullException>(() =>
             new InstanceLock<string>("valid-id", createMsgToPrimary: () => "x"));
 
         // onOtherInstance without createMsg
-        Assert.Throws<ArgumentNullException>(() =>
+        Should.Throw<ArgumentNullException>(() =>
             new InstanceLock<string>("valid-id", onOtherInstanceOpened: _ => ValueTask.CompletedTask));
     }
 
@@ -59,7 +59,7 @@ public sealed class ConstructorValidationTests : UnitTestBase
     [Theory]
     public void NotificationRetryPolicy_NegativeValues_Throws(int attempts, int jitter, int timeout)
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new NotificationRetryPolicy(
+        Should.Throw<ArgumentOutOfRangeException>(() => new NotificationRetryPolicy(
             RetryAttempts: attempts,
             MaxJitterDelay: TimeSpan.FromMilliseconds(jitter),
             ConnectionTimeout: TimeSpan.FromMilliseconds(timeout)));
@@ -72,7 +72,7 @@ public sealed class ConstructorValidationTests : UnitTestBase
     [Theory]
     public void InstanceServerRetryPolicy_NegativeValues_Throws(int uptime, int baseDelay, int maxDelay, int retries)
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new InstanceServerRetryPolicy(
+        Should.Throw<ArgumentOutOfRangeException>(() => new InstanceServerRetryPolicy(
             MinimumUptime: TimeSpan.FromMilliseconds(uptime),
             BaseDelay: TimeSpan.FromMilliseconds(baseDelay),
             MaxDelay: TimeSpan.FromMilliseconds(maxDelay),
@@ -82,7 +82,7 @@ public sealed class ConstructorValidationTests : UnitTestBase
     [Fact]
     public void InstanceServerRetryPolicy_MaxDelayLessThanBaseDelay_Throws()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new InstanceServerRetryPolicy(
+        Should.Throw<ArgumentOutOfRangeException>(() => new InstanceServerRetryPolicy(
             MinimumUptime: TimeSpan.FromSeconds(1),
             BaseDelay: TimeSpan.FromMilliseconds(100),
             MaxDelay: TimeSpan.FromMilliseconds(50)));
@@ -95,11 +95,11 @@ public sealed class ConstructorValidationTests : UnitTestBase
 
         if (OperatingSystem.IsWindows())
         {
-            Assert.Throws<NotSupportedException>(() => new WindowsInstanceLock<string>("test-id", options, null));
+            Should.Throw<NotSupportedException>(() => new WindowsInstanceLock<string>("test-id", options, null));
         }
         else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
         {
-            Assert.Throws<NotSupportedException>(() => new UnixInstanceLock<string>("test-id", options, null));
+            Should.Throw<NotSupportedException>(() => new UnixInstanceLock<string>("test-id", options, null));
         }
     }
 }

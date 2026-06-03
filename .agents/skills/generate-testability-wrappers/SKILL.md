@@ -1,12 +1,20 @@
 ---
-description: 'Generate wrapper interfaces and DI registration for hard-to-test static dependencies in C#. Produces IFileSystem, IEnvironmentProvider, IConsole, IProcessRunner wrappers, or guides adoption of TimeProvider and IHttpClientFactory. USE FOR: generate wrapper for static, create IFileSystem wrapper, wrap DateTime.Now, make static testable, make class testable, create abstraction for File.*, generate DI registration, TimeProvider adoption, IHttpClientFactory setup, testability wrapper, mock-friendly interface, mock time in tests, create the right abstraction to mock, how to mock DateTime, test code using File.ReadAllText, what abstraction for Environment, how to make statics injectable, adopt System.IO.Abstractions, make file calls testable. DO NOT USE FOR: detecting statics (use detect-static-dependencies), migrating call sites (use migrate-static-to-wrapper), general interface design not about testability.'
-metadata:
-    github-path: plugins/dotnet-test/skills/generate-testability-wrappers
-    github-ref: refs/tags/v1.0.0
-    github-repo: https://github.com/dotnet/skills
-    github-tree-sha: cfcb9685f3471aedab12b01807fce1acbce6d329
 name: generate-testability-wrappers
+description: >
+  Generate wrapper interfaces and DI registration for hard-to-test static dependencies in C#.
+  Produces IFileSystem, IEnvironmentProvider, IConsole, IProcessRunner wrappers, or guides adoption
+  of TimeProvider and IHttpClientFactory.
+  USE FOR: generate wrapper for static, create IFileSystem wrapper, wrap DateTime.Now,
+  make static testable, make class testable, create abstraction for File.*, generate
+  DI registration, TimeProvider adoption, IHttpClientFactory setup, testability wrapper,
+  mock-friendly interface, mock time in tests, create the right abstraction to mock,
+  how to mock DateTime, test code using File.ReadAllText, what abstraction for Environment,
+  how to make statics injectable, adopt System.IO.Abstractions, make file calls testable.
+  DO NOT USE FOR: detecting statics (use detect-static-dependencies), migrating call
+  sites (use migrate-static-to-wrapper), general interface design not about testability.
+license: MIT
 ---
+
 # Generate Testability Wrappers
 
 Generate wrapper interfaces, default implementations, and DI service registration code for untestable static dependencies. For statics that already have .NET built-in abstractions (`TimeProvider`, `IHttpClientFactory`), guide adoption of the built-in. For statics without built-in alternatives, generate custom minimal wrappers.
@@ -221,4 +229,3 @@ Always generate:
 | Registering scoped when singleton suffices | Stateless wrappers should be `AddSingleton` |
 | Forgetting test helper packages | `Microsoft.Extensions.TimeProvider.Testing` for time, `System.IO.Abstractions.TestingHelpers` for filesystem |
 | Ambient context without `AsyncLocal` | Non-async `[ThreadStatic]` breaks with `async`/`await` — always use `AsyncLocal<T>` |
-

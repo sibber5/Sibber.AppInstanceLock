@@ -1,13 +1,10 @@
 ---
-description: Reference data for detecting the test platform (VSTest vs Microsoft.Testing.Platform) and test framework (MSTest, xUnit, NUnit, TUnit) from project files. DO NOT USE directly — loaded by run-tests, mtp-hot-reload, and migrate-vstest-to-mtp when they need detection logic.
-metadata:
-    github-path: plugins/dotnet-test/skills/platform-detection
-    github-ref: refs/tags/v1.0.0
-    github-repo: https://github.com/dotnet/skills
-    github-tree-sha: 19455e554d7aeabd2cf4abd7c91674de0c67703d
 name: platform-detection
+description: "Reference data for detecting the test platform (VSTest vs Microsoft.Testing.Platform) and test framework (MSTest, xUnit, NUnit, TUnit) from project files. DO NOT USE directly — loaded by run-tests, mtp-hot-reload, and migrate-vstest-to-mtp when they need detection logic."
 user-invocable: false
+license: MIT
 ---
+
 # Test Platform and Framework Detection
 
 Determine **which test platform** (VSTest or Microsoft.Testing.Platform) and **which test framework** (MSTest, xUnit, NUnit, TUnit) a project uses.

@@ -27,7 +27,7 @@ public sealed class PathGenerationTests : UnitTestBase
 
             // Just verifying it can be constructed without exception with the mocked identity.
             // The paths are private, so we'll test the effects by ensuring TryAcquire throws no unexpected exceptions.
-            Assert.True(inst.TryAcquirePrimary());
+            inst.TryAcquirePrimary().ShouldBeTrue();
         }
         finally
         {
@@ -53,7 +53,7 @@ public sealed class PathGenerationTests : UnitTestBase
             using var inst = new UnixInstanceLock<string>(appId, options, null);
 
             // Just verifying it can be constructed without exception with the mocked identity
-            Assert.True(inst.TryAcquirePrimary());
+            inst.TryAcquirePrimary().ShouldBeTrue();
         }
         finally
         {

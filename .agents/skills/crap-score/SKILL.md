@@ -1,12 +1,17 @@
 ---
-description: 'Calculates CRAP (Change Risk Anti-Patterns) score for .NET methods, classes, or files. Use when the user asks to assess test quality, identify risky untested code, compute CRAP scores, or evaluate whether complex methods have sufficient test coverage. Requires code coverage data (Cobertura XML) and cyclomatic complexity analysis. DO NOT USE FOR: writing tests, general test execution unrelated to coverage/CRAP analysis, or general code coverage reporting without CRAP context.'
-metadata:
-    github-path: plugins/dotnet-test/skills/crap-score
-    github-ref: refs/tags/v1.0.0
-    github-repo: https://github.com/dotnet/skills
-    github-tree-sha: e67783e180c97e3631f50aa304b7256a25f182f9
 name: crap-score
+description: >
+  Calculates targeted CRAP (Change Risk Anti-Patterns) scores for a named .NET
+  method, class, or single source file. Use when the user explicitly asks to
+  compute CRAP scores or assess risky untested code for a specific target,
+  combining Cobertura coverage data with cyclomatic complexity analysis.
+  DO NOT USE FOR: project-wide coverage analysis, coverage plateau or "stuck
+  coverage" diagnosis, what's blocking coverage, or where to add tests across
+  a project (use coverage-analysis); writing tests; running tests without
+  CRAP context.
+license: MIT
 ---
+
 # CRAP Score Analysis
 
 Calculate CRAP (Change Risk Anti-Patterns) scores for .NET methods to identify code that is both complex and undertested.

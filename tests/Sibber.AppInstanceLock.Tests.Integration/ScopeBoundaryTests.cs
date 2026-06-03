@@ -24,7 +24,7 @@ public sealed class ScopeBoundaryTests : IntegrationTestBase
         var options = new InstanceLockOptions { Scope = scope };
         var primary = CreateLock<string>(appId, options: options);
 
-        Assert.True(primary.TryAcquire(TestContext.Current.CancellationToken));
+        primary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
     }
 
     [Fact]
@@ -36,7 +36,7 @@ public sealed class ScopeBoundaryTests : IntegrationTestBase
         var machine = CreateLock<string>(appId, options: new() { Scope = InstanceLockScope.Machine });
 
         // Both should acquire ─ they are separate lock names.
-        Assert.True(session.TryAcquire(TestContext.Current.CancellationToken));
-        Assert.True(machine.TryAcquire(TestContext.Current.CancellationToken));
+        session.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
+        machine.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
     }
 }

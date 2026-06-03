@@ -30,7 +30,7 @@ public sealed class ExceptionMappingTests : UnitTestBase
             using var m = System.Threading.MutexAcl.Create(false, mutexName, out var createdNew, security);
             var options = new InstanceLockOptions { Scope = InstanceLockScope.Session };
             using var inst = new WindowsInstanceLock<string>(appId, options, null);
-            Assert.False(inst.TryAcquirePrimary());
+            inst.TryAcquirePrimary().ShouldBeFalse();
         }
         else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
         {
@@ -44,7 +44,7 @@ public sealed class ExceptionMappingTests : UnitTestBase
 
                 var options = new InstanceLockOptions { Scope = InstanceLockScope.Session };
                 using var inst = new UnixInstanceLock<string>(appId, options, null);
-                Assert.False(inst.TryAcquirePrimary());
+                inst.TryAcquirePrimary().ShouldBeFalse();
 
                 File.SetUnixFileMode(tempPath, UnixFileMode.UserWrite | UnixFileMode.UserRead);
                 File.Delete(tempPath);
