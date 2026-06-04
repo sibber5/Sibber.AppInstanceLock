@@ -8,10 +8,10 @@
     <Version>1.0.0</Version>
     <Authors>sibber</Authors>
     <Description>Enforce a single running instance of your app, across either the machine, user, or session. Supports Windows, Linux, and MacOS.</Description>
-    <Copyright>Copyright (c) 2025 sibber (GitHub: sibber5)</Copyright>
+    <Copyright>Copyright (c) 2025-2026 sibber (GitHub: sibber5)</Copyright>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://sibber5.github.io/Sibber.SingleInstanceApp</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/sibber5/Sibber.SingleInstanceApp</RepositoryUrl>
+    <PackageProjectUrl>https://sibber5.github.io/Sibber.AppInstanceLock</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/sibber5/Sibber.AppInstanceLock</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
