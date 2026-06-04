@@ -57,36 +57,27 @@ public sealed class ConstructorValidationTests : UnitTestBase
     [InlineData(10, -1, 10)]
     [InlineData(10, 10, -1)]
     [Theory]
-    public void NotificationRetryPolicy_NegativeValues_Throws(int attempts, int jitter, int timeout)
-    {
-        Should.Throw<ArgumentOutOfRangeException>(() => new NotificationRetryPolicy(
-            RetryAttempts: attempts,
-            MaxJitterDelay: TimeSpan.FromMilliseconds(jitter),
-            ConnectionTimeout: TimeSpan.FromMilliseconds(timeout)));
-    }
+    public void NotificationRetryPolicy_NegativeValues_Throws(int attempts, int jitter, int timeout) => Should.Throw<ArgumentOutOfRangeException>(() => new NotificationRetryPolicy(
+                                                                                                                 RetryAttempts: attempts,
+                                                                                                                 MaxJitterDelay: TimeSpan.FromMilliseconds(jitter),
+                                                                                                                 ConnectionTimeout: TimeSpan.FromMilliseconds(timeout)));
 
     [InlineData(-1, 10, 10, 10)]
     [InlineData(10, -1, 10, 10)]
     [InlineData(10, 10, -1, 10)]
     [InlineData(10, 10, 10, -2)]
     [Theory]
-    public void InstanceServerRetryPolicy_NegativeValues_Throws(int uptime, int baseDelay, int maxDelay, int retries)
-    {
-        Should.Throw<ArgumentOutOfRangeException>(() => new InstanceServerRetryPolicy(
-            MinimumUptime: TimeSpan.FromMilliseconds(uptime),
-            BaseDelay: TimeSpan.FromMilliseconds(baseDelay),
-            MaxDelay: TimeSpan.FromMilliseconds(maxDelay),
-            MaxRetries: retries));
-    }
+    public void InstanceServerRetryPolicy_NegativeValues_Throws(int uptime, int baseDelay, int maxDelay, int retries) => Should.Throw<ArgumentOutOfRangeException>(() => new InstanceServerRetryPolicy(
+                                                                                                                                  MinimumUptime: TimeSpan.FromMilliseconds(uptime),
+                                                                                                                                  BaseDelay: TimeSpan.FromMilliseconds(baseDelay),
+                                                                                                                                  MaxDelay: TimeSpan.FromMilliseconds(maxDelay),
+                                                                                                                                  MaxRetries: retries));
 
     [Fact]
-    public void InstanceServerRetryPolicy_MaxDelayLessThanBaseDelay_Throws()
-    {
-        Should.Throw<ArgumentOutOfRangeException>(() => new InstanceServerRetryPolicy(
-            MinimumUptime: TimeSpan.FromSeconds(1),
-            BaseDelay: TimeSpan.FromMilliseconds(100),
-            MaxDelay: TimeSpan.FromMilliseconds(50)));
-    }
+    public void InstanceServerRetryPolicy_MaxDelayLessThanBaseDelay_Throws() => Should.Throw<ArgumentOutOfRangeException>(() => new InstanceServerRetryPolicy(
+                                                                                         MinimumUptime: TimeSpan.FromSeconds(1),
+                                                                                         BaseDelay: TimeSpan.FromMilliseconds(100),
+                                                                                         MaxDelay: TimeSpan.FromMilliseconds(50)));
 
     [Fact]
     public void BackendLock_InvalidScope_Throws()

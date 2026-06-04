@@ -19,9 +19,10 @@ namespace Sibber.AppInstanceLock.Tests.Shared;
 [SupportedOSPlatform("windows")]
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
-public abstract class TestBase : IDisposable
+public abstract class TestBase : IDisposable, IAsyncDisposable
 {
     protected readonly List<IDisposable> _disposables = [];
+    private readonly List<Func<Task?>> _serverLoopGetters = [];
 
     protected abstract string Prefix { get; }
 
@@ -37,6 +38,7 @@ public abstract class TestBase : IDisposable
     {
         var l = new InstanceLock<TMessage>(appId, createMsg, onOtherInstance, onServerException, options: options);
         _disposables.Add(l);
+        _serverLoopGetters.Add(() => l._pipeServerLoopTask);
         return l;
     }
 
@@ -44,8 +46,28 @@ public abstract class TestBase : IDisposable
     {
         foreach (var d in _disposables)
         {
-            try { d.Dispose(); }
-            catch { /* best-effort cleanup */ }
+            d.Dispose();
+        }
+    }
+
+    public virtual async ValueTask DisposeAsync()
+    {
+        foreach (var d in _disposables)
+        {
+            if (d is IAsyncDisposable ad) await ad.DisposeAsync();
+            else d.Dispose();
+        }
+
+        foreach (var getTask in _serverLoopGetters)
+        {
+            if (getTask() is { } t)
+            {
+                try
+                {
+                    await t.WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch (OperationCanceledException) { }
+            }
         }
     }
 }

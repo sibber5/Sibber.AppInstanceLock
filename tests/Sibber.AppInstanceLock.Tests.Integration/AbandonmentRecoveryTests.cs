@@ -5,7 +5,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 
 namespace Sibber.AppInstanceLock.Tests.Integration;
 
@@ -35,7 +34,6 @@ public sealed class AbandonmentRecoveryTests : IntegrationTestBase
     }
 
     [Fact]
-    [SuppressMessage("Usage", "xUnit1051:Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken")]
     public async Task CrashWithoutDispose_ReleasesLock_AllowingNewAcquisition()
     {
         var appId = UniqueAppId();
@@ -44,7 +42,7 @@ public sealed class AbandonmentRecoveryTests : IntegrationTestBase
         try
         {
             // Wait for ACQUIRED
-            var line = await p1.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+            var line = await p1.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
             line.ShouldBe("ACQUIRED");
 
             // Forcefully terminate Process 1 (Crash / SIGKILL)
@@ -55,7 +53,7 @@ public sealed class AbandonmentRecoveryTests : IntegrationTestBase
             using var p2 = StartHarness(appId);
             try
             {
-                var line2 = await p2.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+                var line2 = await p2.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
                 line2.ShouldBe("ACQUIRED");
             }
             finally

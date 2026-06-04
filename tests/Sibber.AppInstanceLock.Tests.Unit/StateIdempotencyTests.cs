@@ -65,7 +65,7 @@ public sealed class StateIdempotencyTests : UnitTestBase
     {
         var appId = UniqueAppId();
         var callCount = 0;
-        using var primary = CreateLock<string>(appId, createMsg: () =>
+        using var primary = CreateLock(appId, createMsg: () =>
         {
             callCount++;
             return "msg";
@@ -85,25 +85,30 @@ public sealed class StateIdempotencyTests : UnitTestBase
     {
         var appId = UniqueAppId();
         var receivedCount = 0;
-        using var primary = CreateLock<string>(appId, createMsg: () => "msg", onOtherInstance: _ =>
+        var firstMsgTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondMsgTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var primary = CreateLock(appId, createMsg: () => "msg", onOtherInstance: _ =>
         {
             // ReSharper disable once AccessToModifiedClosure
-            Interlocked.Increment(ref receivedCount);
+            var count = Interlocked.Increment(ref receivedCount);
+            if (count == 1) firstMsgTcs.TrySetResult();
+            else if (count == 2) secondMsgTcs.TrySetResult();
             return ValueTask.CompletedTask;
         });
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
-        using var secondary = CreateLock<string>(appId, createMsg: () => "msg", onOtherInstance: _ => ValueTask.CompletedTask);
+        using var secondary = CreateLock(appId, createMsg: () => "msg", onOtherInstance: _ => ValueTask.CompletedTask);
 
         secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
 
         // Wait for primary to process
-        await Task.Delay(100, TestContext.Current.CancellationToken);
-        Interlocked.CompareExchange(ref receivedCount, 0, 0).ShouldBe(1);
+        await firstMsgTcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Volatile.Read(ref receivedCount).ShouldBe(1);
 
         // Subsequent call on secondary
         secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
-        await Task.Delay(100, TestContext.Current.CancellationToken);
-        Interlocked.CompareExchange(ref receivedCount, 0, 0).ShouldBe(2);
+        await secondMsgTcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Volatile.Read(ref receivedCount).ShouldBe(2);
     }
 }

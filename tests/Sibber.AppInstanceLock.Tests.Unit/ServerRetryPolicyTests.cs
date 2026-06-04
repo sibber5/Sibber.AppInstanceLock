@@ -60,7 +60,7 @@ public sealed class ServerRetryPolicyTests : UnitTestBase
 
         // Account for thread scheduling overhead (e.g., allow ~20ms minimum for 0 delay if 0 retries isn't instant, though it should be fast).
         // Since xUnit can be slightly unpredictable, we use a small tolerance buffer for the lower bound.
-        (sw.ElapsedMilliseconds >= Math.Max(0, expectedDelayMs - 30)).ShouldBeTrue($"Elapsed too short: {sw.ElapsedMilliseconds}ms (Expected >= {expectedDelayMs})");
-        (sw.ElapsedMilliseconds < expectedDelayMs + 2000).ShouldBeTrue($"Elapsed too long: {sw.ElapsedMilliseconds}ms");
+        sw.ElapsedMilliseconds.ShouldBeGreaterThanOrEqualTo(Math.Max(0, expectedDelayMs - 30));
+        sw.ElapsedMilliseconds.ShouldBeLessThan(expectedDelayMs + 2000);
     }
 }

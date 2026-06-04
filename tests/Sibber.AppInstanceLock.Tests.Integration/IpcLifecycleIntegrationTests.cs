@@ -30,24 +30,25 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        // give it a moment to enter the lock and assign _pipeCts
-        await Task.Delay(100, TestContext.Current.CancellationToken);
+
+        await Task.Run(async () =>
+        {
+            while (Volatile.Read(ref backend._pipeCts) == null)
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+        }, TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         backend._pipeCts.ShouldNotBeNull();
 
         primary.Dispose();
 
         // _pipeCts should be null or canceled
-        if (backend._pipeCts != null)
-        {
-            backend._pipeCts.Token.IsCancellationRequested.ShouldBeTrue();
-        }
+        backend._pipeCts?.Token.IsCancellationRequested.ShouldBe(true, "The server loop cancellation token should be requested to cancel");
 
         // Wait for server loop task to complete gracefully
         if (primary._pipeServerLoopTask is { } serverTask)
         {
             await serverTask.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-            serverTask.IsCompletedSuccessfully.ShouldBeTrue();
+            serverTask.Status.ShouldBe(TaskStatus.RanToCompletion);
         }
     }
 
@@ -64,16 +65,16 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
 
         backend.OnBeforePipeCtsLock = () =>
         {
-            barrier.SignalAndWait(5000); // Wait for Dispose thread to reach its hook
-            barrier.SignalAndWait(5000); // Wait for Dispose thread to finish locking
+            barrier.SignalAndWait(5000).ShouldBeTrue(); // Wait for Dispose thread to reach its hook
+            barrier.SignalAndWait(5000).ShouldBeTrue(); // Wait for Dispose thread to finish locking
         };
 
         backend.OnBeforeDisposeCtsLock = () =>
         {
-            barrier.SignalAndWait(5000); // Align with RunServerLoop
+            barrier.SignalAndWait(5000).ShouldBeTrue(); // Align with RunServerLoop
             // RunServerLoop is now waiting for the second signal, so we signal it
             // and immediately lock _pipeCtsLock inside Dispose()
-            barrier.SignalAndWait(5000);
+            barrier.SignalAndWait(5000).ShouldBeTrue();
         };
 
         // We call TryAcquirePrimary directly to set it as primary,
@@ -106,14 +107,14 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
 
         backend.OnBeforeServerLoopCleanup = () =>
         {
-            barrier.SignalAndWait(5000);
-            barrier.SignalAndWait(5000);
+            barrier.SignalAndWait(5000).ShouldBeTrue();
+            barrier.SignalAndWait(5000).ShouldBeTrue();
         };
 
         backend.OnBeforeDisposeCtsLock = () =>
         {
-            barrier.SignalAndWait(5000);
-            barrier.SignalAndWait(5000);
+            barrier.SignalAndWait(5000).ShouldBeTrue();
+            barrier.SignalAndWait(5000).ShouldBeTrue();
         };
 
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -122,7 +123,11 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        await Task.Delay(100, TestContext.Current.CancellationToken);
+        await Task.Run(async () =>
+        {
+            while (Volatile.Read(ref backend._pipeCts) == null)
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+        }, TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         // Cancel the pipe to force the server loop to exit and hit the cleanup finally block
         await backend._pipeCts!.CancelAsync();
@@ -147,28 +152,33 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         isPrimary.ShouldBeTrue();
 
         var numThreads = 10;
-        using var startEvent = new ManualResetEventSlim(false);
+        var startTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var tasks = new Task[numThreads];
 
         for (var i = 0; i < numThreads; i++)
         {
             tasks[i] = Task.Run(async () =>
             {
-                // ReSharper disable once AccessToDisposedClosure
-                startEvent.Wait();
+                await startTcs.Task;
                 try
                 {
-                    var task = backend.RunServerLoop(_ => ValueTask.CompletedTask, null, CancellationToken.None);
-                    await task;
+                    var t = backend.RunServerLoop(_ => ValueTask.CompletedTask, null, CancellationToken.None);
+                    await t;
                 }
-                catch (UnreachableException) { }
+                catch (UnreachableException ex)
+                {
+                    ex.Message.ShouldNotBeNull();
+                }
             }, TestContext.Current.CancellationToken);
         }
 
-        startEvent.Set();
+        startTcs.SetResult();
 
-        // Wait briefly for all threads to hit the lock and start/abort the loop
-        await Task.Delay(500, TestContext.Current.CancellationToken);
+        await Task.Run(async () =>
+        {
+            while (Volatile.Read(ref backend._pipeCts) == null && !TestContext.Current.CancellationToken.IsCancellationRequested)
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+        }, TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         // Cancel the created CTS so the primary loop exits
         if (backend._pipeCts is not null) await backend._pipeCts.CancelAsync();
@@ -189,20 +199,19 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         var numThreads = 10;
-        using var startEvent = new ManualResetEventSlim(false);
+        var startTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var tasks = new Task[numThreads];
 
         for (var i = 0; i < numThreads; i++)
         {
-            tasks[i] = Task.Run(() =>
+            tasks[i] = Task.Run(async () =>
             {
-                // ReSharper disable once AccessToDisposedClosure
-                startEvent.Wait();
+                await startTcs.Task;
                 primary.Dispose();
             }, TestContext.Current.CancellationToken);
         }
 
-        startEvent.Set();
+        startTcs.SetResult();
         await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         primary._backend._pipeCts.ShouldBeNull();

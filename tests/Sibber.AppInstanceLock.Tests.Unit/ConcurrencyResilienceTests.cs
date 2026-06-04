@@ -22,7 +22,7 @@ public sealed class ConcurrencyResilienceTests : UnitTestBase
             NotificationRetryPolicy = new NotificationRetryPolicy(RetryAttempts: 10, MaxJitterDelay: TimeSpan.FromSeconds(5), ConnectionTimeout: TimeSpan.FromSeconds(1))
         };
 
-        using var secondary = CreateLock<string>(appId, createMsg: () => "msg", onOtherInstance: _ => ValueTask.CompletedTask, options: options);
+        using var secondary = CreateLock(appId, createMsg: () => "msg", onOtherInstance: _ => ValueTask.CompletedTask, options: options);
         using var cts = new CancellationTokenSource();
         cts.CancelAfter(TimeSpan.FromMilliseconds(100));
 
@@ -31,11 +31,11 @@ public sealed class ConcurrencyResilienceTests : UnitTestBase
         sw.Stop();
 
         // Should complete quickly due to cancellation, not taking the full 10 seconds of retries.
-        (sw.Elapsed < TimeSpan.FromSeconds(5)).ShouldBeTrue("Cancellation took too long.");
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5), "Cancellation took too long.");
     }
 
     [Fact]
-    public void ConcurrentDispose_TerminatesCleanly()
+    public async Task ConcurrentDispose_TerminatesCleanly()
     {
         var appId = UniqueAppId();
         using var primary = CreateLock<string>(appId);
@@ -46,21 +46,36 @@ public sealed class ConcurrencyResilienceTests : UnitTestBase
             NotificationRetryPolicy = new NotificationRetryPolicy(RetryAttempts: 10, MaxJitterDelay: TimeSpan.FromSeconds(5), ConnectionTimeout: TimeSpan.FromSeconds(1))
         };
 
-        var secondary = CreateLock<string>(appId, createMsg: () => "msg", onOtherInstance: _ => ValueTask.CompletedTask, options: options);
+        var secondary = CreateLock(appId, createMsg: () => "msg", onOtherInstance: _ => ValueTask.CompletedTask, options: options);
 
-        _ = Task.Run(async () =>
+        var startedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // ReSharper disable once AccessToDisposedClosure
+        var task = Task.Run(() =>
         {
-            await Task.Delay(100);
-            secondary.Dispose();
-        }, TestContext.Current.CancellationToken);
+            startedTcs.TrySetResult();
+            return secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken);
+        });
 
-        secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
+        await startedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        secondary.Dispose();
+
+        try
+        {
+            var result = await task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            result.ShouldBeFalse();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Disposed before TryAcquireOrNotify could fully begin
+        }
     }
 
     [InlineData(0, 0, 50, 40)] // 0 retries => 1 attempt. 50ms timeout.
     [InlineData(3, 0, 50, 150)] // 3 retries => 4 attempts. 4 * 50ms = 200ms. Minimum 150ms.
-    [InlineData(1, 500, 10, 20)] // 1 retry => 2 attempts. Jitter up to 500ms.
-    [InlineData(2, 300, 20, 50)] // 2 retries => 3 attempts. Jitter up to 300ms each.
+    [InlineData(1, 500, 50, 75)] // 1 retry => 2 attempts. 2 * 50ms = 100ms. Minimum 75ms.
+    [InlineData(2, 300, 50, 110)] // 2 retries => 3 attempts. 3 * 50ms = 150ms. Minimum 110ms.
     [Theory]
     public void NotificationRetryPolicy_ExhaustsAttempts_FollowsTiming(int retries, int maxJitterMs, int timeoutMs, int minElapsedMs)
     {
@@ -77,7 +92,7 @@ public sealed class ConcurrencyResilienceTests : UnitTestBase
                 ConnectionTimeout: TimeSpan.FromMilliseconds(timeoutMs))
         };
 
-        using var secondary = CreateLock<string>(appId, createMsg: () => "msg", onOtherInstance: _ => ValueTask.CompletedTask, options: options);
+        using var secondary = CreateLock(appId, createMsg: () => "msg", onOtherInstance: _ => ValueTask.CompletedTask, options: options);
 
         var sw = Stopwatch.StartNew();
         secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
@@ -86,6 +101,6 @@ public sealed class ConcurrencyResilienceTests : UnitTestBase
         // Ensure that it took at least the combined connection timeouts (or minimum bound).
         // Since Random jitter is applied, it could be longer, but it should never be faster
         // than the minimum bound expected from connection timeouts.
-        (sw.ElapsedMilliseconds >= minElapsedMs).ShouldBeTrue($"Elapsed too short: {sw.ElapsedMilliseconds}ms (Expected >= {minElapsedMs}ms)");
+        sw.ElapsedMilliseconds.ShouldBeGreaterThanOrEqualTo(minElapsedMs, $"Elapsed too short: {sw.ElapsedMilliseconds}ms (Expected >= {minElapsedMs}ms)");
     }
 }

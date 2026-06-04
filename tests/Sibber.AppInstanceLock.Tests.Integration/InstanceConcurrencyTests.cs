@@ -70,7 +70,7 @@ public sealed class InstanceConcurrencyTests : IntegrationTestBase
         {
             var l = CreateLock<string>(appId);
             // ReSharper disable once AccessToDisposedClosure
-            barrier.SignalAndWait();
+            barrier.SignalAndWait(5000).ShouldBeTrue();
             results[0] = l.TryAcquire(TestContext.Current.CancellationToken);
         }, TestContext.Current.CancellationToken);
 
@@ -78,7 +78,7 @@ public sealed class InstanceConcurrencyTests : IntegrationTestBase
         {
             var l = CreateLock<string>(appId);
             // ReSharper disable once AccessToDisposedClosure
-            barrier.SignalAndWait();
+            barrier.SignalAndWait(5000).ShouldBeTrue();
             results[1] = l.TryAcquire(TestContext.Current.CancellationToken);
         }, TestContext.Current.CancellationToken);
 

@@ -248,7 +248,8 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
             var length = BinaryPrimitives.ReadInt32LittleEndian(lenBuf.Span);
             const int OneMiB = 1024 * 1024;
             if (length > OneMiB) throw new InvalidOperationException($"Message is too large. Maximum length is 1,048,576 bytes (1MiB). Message length is {length} bytes.");
-            if (length <= 0) throw new InvalidOperationException($"Message is less than or equal to 0 bytes. ({length} bytes)");
+            if (length < 0) throw new InvalidOperationException($"Message length is less than 0 bytes. ({length} bytes)");
+            if (length == 0) return (true, default!);
 
             var msgBuf = length <= buf.Length ? buf.AsMemory(0, length) : new byte[length];
             try

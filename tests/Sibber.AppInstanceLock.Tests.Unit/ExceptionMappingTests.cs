@@ -27,7 +27,7 @@ public sealed class ExceptionMappingTests : UnitTestBase
             var rule = new System.Security.AccessControl.MutexAccessRule(wid.User!, System.Security.AccessControl.MutexRights.FullControl, System.Security.AccessControl.AccessControlType.Deny);
             security.AddAccessRule(rule);
 
-            using var m = System.Threading.MutexAcl.Create(false, mutexName, out var createdNew, security);
+            using var m = MutexAcl.Create(false, mutexName, out var createdNew, security);
             var options = new InstanceLockOptions { Scope = InstanceLockScope.Session };
             using var inst = new WindowsInstanceLock<string>(appId, options, null);
             inst.TryAcquirePrimary().ShouldBeFalse();

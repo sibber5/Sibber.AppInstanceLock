@@ -4,6 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+using System.IO.Pipes;
+
 namespace Sibber.AppInstanceLock.Tests.Integration;
 
 public sealed class IpcCommunicationTests : IntegrationTestBase
@@ -50,6 +52,36 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
 
         var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         received.ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task IpcRoundTrip_ZeroLengthMessage_ReceivedByPrimary()
+    {
+        var appId = UniqueAppId();
+        var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var primary = CreateLock(
+            appId,
+            createMsg: () => "test",
+            onOtherInstance: msg =>
+            {
+                tcs.TrySetResult(msg);
+                return ValueTask.CompletedTask;
+            });
+
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
+
+        var pipeName = primary._backend._pipeName;
+        await using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.None);
+        await client.ConnectAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        // Write 4 bytes of 0 to indicate a length of 0
+        var lenBuf = new byte[4];
+        await client.WriteAsync(lenBuf, TestContext.Current.CancellationToken);
+        await client.FlushAsync(TestContext.Current.CancellationToken);
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        received.ShouldBeNull();
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -129,11 +161,19 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         const int Count = 5;
 
+        var messageTcsList = Enumerable.Range(0, Count)
+            .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+            .ToList();
+
         var primary = CreateLock(
             appId,
             createMsg: () => "x",
             onOtherInstance: msg =>
             {
+                if (msg.StartsWith("msg-", StringComparison.Ordinal) && int.TryParse(msg.AsSpan(4), out var index))
+                {
+                    messageTcsList[index].TrySetResult();
+                }
                 lock (received)
                 {
                     received.Add(msg);
@@ -154,8 +194,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
             secondary.Dispose();
 
-            // brief pause to let the pipe server cycle between connections
-            await Task.Delay(50, TestContext.Current.CancellationToken);
+            // Deterministic wait: wait until the primary has received this message
+            await messageTcsList[i].Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         }
 
         await allReceived.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
@@ -231,13 +271,19 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         var callCount = 0;
         var secondMessageTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        var firstMessageTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         var primary = CreateLock(
             appId,
             createMsg: () => "ping",
             onOtherInstance: msg =>
             {
                 var n = Interlocked.Increment(ref callCount);
-                if (n == 1) throw new InvalidOperationException("Intentional test explosion");
+                if (n == 1)
+                {
+                    firstMessageTcs.TrySetResult();
+                    throw new InvalidOperationException("Intentional test explosion");
+                }
                 secondMessageTcs.TrySetResult(msg);
                 return ValueTask.CompletedTask;
             });
@@ -249,8 +295,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         s1.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
         s1.Dispose();
 
-        // allow pipe server to cycle back to WaitForConnectionAsync
-        await Task.Delay(200, TestContext.Current.CancellationToken);
+        // Wait for the primary to process the first message and throw
+        await firstMessageTcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         // second secondary should still be handled
         var s2 = CreateLock(appId, () => "second", _ => ValueTask.CompletedTask);
@@ -258,7 +304,7 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
 
         var received = await secondMessageTcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         received.ShouldBe("second");
-        (callCount >= 2).ShouldBeTrue();
+        callCount.ShouldBeGreaterThanOrEqualTo(2);
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -311,12 +357,10 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         await AwaitServerLoopAsync(primary, TimeSpan.FromSeconds(5));
 
         var serverTask = primary._pipeServerLoopTask;
-        if (serverTask is not null)
-        {
-            serverTask.IsCompleted.ShouldBeTrue();
-            serverTask.IsFaulted.ShouldBeFalse();
-        }
+        serverTask?.Status.ShouldBe(TaskStatus.RanToCompletion);
     }
+
+
 
     // ──────────────────────────────────────────────────────────────────────
     // INVARIANT: Notification with no IPC configured is a no-op
@@ -401,10 +445,6 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         await AwaitServerLoopAsync(primary, TimeSpan.FromSeconds(5));
 
         var serverTask = primary._pipeServerLoopTask;
-        if (serverTask is not null)
-        {
-            serverTask.IsCompleted.ShouldBeTrue();
-            serverTask.IsFaulted.ShouldBeFalse();
-        }
+        serverTask?.Status.ShouldBe(TaskStatus.RanToCompletion);
     }
 }

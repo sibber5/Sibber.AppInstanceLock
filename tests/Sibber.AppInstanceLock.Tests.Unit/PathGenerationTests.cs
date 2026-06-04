@@ -6,6 +6,7 @@
 
 namespace Sibber.AppInstanceLock.Tests.Unit;
 
+[Collection("StaticHooks")]
 public sealed class PathGenerationTests : UnitTestBase
 {
     [InlineData(InstanceLockScope.User)]
@@ -37,6 +38,7 @@ public sealed class PathGenerationTests : UnitTestBase
     }
 
     [InlineData(InstanceLockScope.User)]
+    [InlineData(InstanceLockScope.Machine)]
     [InlineData(InstanceLockScope.Session)]
     [Theory]
     public void Unix_PathGeneration_And_Isolation(InstanceLockScope scope)
