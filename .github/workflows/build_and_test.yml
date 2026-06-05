@@ -1,0 +1,37 @@
+name: Build & Test
+
+run-name: Build & Test - ${{ github.event.head_commit.message || github.event.pull_request.title }} (by @${{ github.actor }})
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+    branches: ['main']
+
+  workflow_dispatch:
+
+jobs:
+  build_and_test:
+    name: Build & Test Sibber.AppInstanceLock (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.x'
+          dotnet-quality: 'ga'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release --property:TreatWarningsAsErrors=true
+
+      - name: Test
+        run: dotnet test --no-build -c Release
