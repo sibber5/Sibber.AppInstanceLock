@@ -188,13 +188,13 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
         {
             while (!loopCt.IsCancellationRequested)
             {
+                // ReSharper disable once UseAwaitUsing
+                using var pipe = CreatePipeServer(); // Recreate server for next connection. Let exceptions bubble up to outer retry policy.
+#if INCLUDE_TEST_HOOKS
+                OnServerReady?.Invoke();
+#endif
                 try
                 {
-                    // ReSharper disable once UseAwaitUsing
-                    using var pipe = CreatePipeServer(); // recreate server for next connection
-#if INCLUDE_TEST_HOOKS
-                    OnServerReady?.Invoke();
-#endif
                     await pipe.WaitForConnectionAsync(loopCt).ConfigureAwait(false);
 
                     bool read;
@@ -231,6 +231,10 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                 catch (ObjectDisposedException)
                 {
                     break;
+                }
+                catch (IOException ioEx)
+                {
+                    _logger?.LogDebug(ioEx, "Primary instance pipe server threw IOException during connection/read. Client might have disconnected early.");
                 }
             }
         }

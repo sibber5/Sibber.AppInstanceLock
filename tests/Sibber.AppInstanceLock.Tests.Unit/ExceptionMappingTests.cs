@@ -34,16 +34,35 @@ public sealed class ExceptionMappingTests : UnitTestBase
         }
         else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
         {
-            var tempPath = Path.Combine(Path.GetTempPath(), $"{appId}_session_ci_mock_session.lock");
+            var options = new InstanceLockOptions { Scope = InstanceLockScope.Session };
+            using var inst = new UnixInstanceLock<string>(appId, options, null);
+            var tempPath = inst._lockFilePath;
+
+            var parentDir = Path.GetDirectoryName(tempPath);
+            if (!string.IsNullOrEmpty(parentDir))
+            {
+                Directory.CreateDirectory(parentDir);
+            }
+
             File.WriteAllText(tempPath, "lock");
             File.SetUnixFileMode(tempPath, UnixFileMode.None); // no access
 
-            var options = new InstanceLockOptions { Scope = InstanceLockScope.Session };
-            using var inst = new UnixInstanceLock<string>(appId, options, null);
-            inst.TryAcquirePrimary().ShouldBeFalse();
-
-            File.SetUnixFileMode(tempPath, UnixFileMode.UserWrite | UnixFileMode.UserRead);
-            File.Delete(tempPath);
+            try
+            {
+                inst.TryAcquirePrimary().ShouldBeFalse();
+            }
+            finally
+            {
+                try
+                {
+                    File.SetUnixFileMode(tempPath, UnixFileMode.UserWrite | UnixFileMode.UserRead);
+                    File.Delete(tempPath);
+                }
+                catch
+                {
+                    // Ignore cleanup failure to not mask the main failure
+                }
+            }
         }
     }
 }

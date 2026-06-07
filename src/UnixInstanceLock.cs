@@ -27,7 +27,7 @@ internal static class UnixInstanceLockHooks
 [SupportedOSPlatform("macos")]
 internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 {
-    private readonly string _lockFilePath;
+    internal readonly string _lockFilePath;
 
     private FileStream? _lockFileStream;
     private bool _ownsLock;
