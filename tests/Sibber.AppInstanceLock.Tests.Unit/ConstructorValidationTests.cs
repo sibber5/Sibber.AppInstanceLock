@@ -17,13 +17,9 @@ public sealed class ConstructorValidationTests : UnitTestBase
     public void Constructor_NullAppId_Throws() => Should.Throw<ArgumentNullException>(() => new InstanceLock<string>(null!));
 
     [Fact]
-    public void Constructor_EmptyAppId_DoesNotThrowInConstructor()
+    public void Constructor_EmptyAppId_Throws()
     {
-        // The production code validates characters via foreach, which vacuously passes
-        // for empty strings. This test documents that behavior ─ empty strings are not
-        // rejected at construction time.
-        var ex = Record.Exception(() => new InstanceLock<string>(""));
-        ex.ShouldBeNull();
+        Should.Throw<ArgumentException>(() => new InstanceLock<string>(""));
     }
 
     [Fact]

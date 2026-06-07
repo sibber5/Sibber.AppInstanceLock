@@ -82,7 +82,7 @@ public sealed class InstanceLock<TMessage> : IDisposable
     {
         if (onOtherInstanceOpened is null && createMsgToPrimary is not null) throw new ArgumentNullException(nameof(onOtherInstanceOpened), $"{nameof(onOtherInstanceOpened)} is null, but {nameof(createMsgToPrimary)} is not null.");
         if (createMsgToPrimary is null && onOtherInstanceOpened is not null) throw new ArgumentNullException(nameof(createMsgToPrimary), $"{nameof(createMsgToPrimary)} is null, but {nameof(onOtherInstanceOpened)} is not null.");
-        ArgumentNullException.ThrowIfNull(appId);
+        ArgumentException.ThrowIfNullOrEmpty(appId);
         if (appId.Length > 128) throw new ArgumentOutOfRangeException(nameof(appId), "App ID must be 128 characters or less.");
         foreach (var c in appId.AsSpan())
         {

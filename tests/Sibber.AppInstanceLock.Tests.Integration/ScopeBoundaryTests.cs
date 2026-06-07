@@ -27,16 +27,43 @@ public sealed class ScopeBoundaryTests : IntegrationTestBase
         primary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
     }
 
-    [Fact]
-    public void TryAcquire_DifferentScopes_SameAppId_AreIndependent()
+    [Theory]
+    [InlineData(InstanceLockScope.Session, InstanceLockScope.User)]
+    [InlineData(InstanceLockScope.Session, InstanceLockScope.Machine)]
+    [InlineData(InstanceLockScope.User, InstanceLockScope.Session)]
+    [InlineData(InstanceLockScope.User, InstanceLockScope.Machine)]
+    [InlineData(InstanceLockScope.Machine, InstanceLockScope.Session)]
+    [InlineData(InstanceLockScope.Machine, InstanceLockScope.User)]
+    public void TryAcquire_DifferentScopes_AllCombinations_AreIndependent(InstanceLockScope first, InstanceLockScope second)
     {
         var appId = UniqueAppId();
 
+        var lock1 = CreateLock<string>(appId, options: new() { Scope = first });
+        var lock2 = CreateLock<string>(appId, options: new() { Scope = second });
+
+        lock1.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
+        lock2.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(InstanceLockScope.Session)]
+    [InlineData(InstanceLockScope.User)]
+    [InlineData(InstanceLockScope.Machine)]
+    public void TryAcquire_SameScope_WhileMultipleOtherScopesExist_Fails(InstanceLockScope targetScope)
+    {
+        var appId = UniqueAppId();
+
+        // Acquire all scopes first
         var session = CreateLock<string>(appId, options: new() { Scope = InstanceLockScope.Session });
+        var user = CreateLock<string>(appId, options: new() { Scope = InstanceLockScope.User });
         var machine = CreateLock<string>(appId, options: new() { Scope = InstanceLockScope.Machine });
 
-        // Both should acquire ─ they are separate lock names.
         session.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
+        user.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
         machine.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
+
+        // Now try to acquire the target scope again
+        var duplicate = CreateLock<string>(appId, options: new() { Scope = targetScope });
+        duplicate.TryAcquire(TestContext.Current.CancellationToken).ShouldBeFalse();
     }
 }
