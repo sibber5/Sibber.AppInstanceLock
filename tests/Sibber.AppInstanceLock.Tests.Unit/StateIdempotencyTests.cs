@@ -88,6 +88,8 @@ public sealed class StateIdempotencyTests : UnitTestBase
         var firstMsgTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondMsgTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        using var serverReadySem = new SemaphoreSlim(0);
+
         using var primary = CreateLock(appId, createMsg: () => "msg", onOtherInstance: _ =>
         {
             // ReSharper disable once AccessToModifiedClosure
@@ -95,8 +97,17 @@ public sealed class StateIdempotencyTests : UnitTestBase
             if (count == 1) firstMsgTcs.TrySetResult();
             else if (count == 2) secondMsgTcs.TrySetResult();
             return ValueTask.CompletedTask;
+        }, onServerException: ex =>
+        {
+            Console.WriteLine($"SERVER EXCEPTION: {ex}");
+            return true;
         });
+
+        primary._backend.OnServerReady = () => serverReadySem.Release();
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
+
+        // Wait for primary server loop to actually start before connecting with secondary
+        await serverReadySem.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         using var secondary = CreateLock(appId, createMsg: () => "msg", onOtherInstance: _ => ValueTask.CompletedTask);
 
@@ -105,6 +116,9 @@ public sealed class StateIdempotencyTests : UnitTestBase
         // Wait for primary to process
         await firstMsgTcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Volatile.Read(ref receivedCount).ShouldBe(1);
+
+        // Wait for server to restart
+        await serverReadySem.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         // Subsequent call on secondary
         secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();

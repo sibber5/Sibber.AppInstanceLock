@@ -16,6 +16,13 @@ using static Sibber.AppInstanceLock.PInvoke;
 
 namespace Sibber.AppInstanceLock;
 
+#if INCLUDE_TEST_HOOKS
+internal static class UnixInstanceLockHooks
+{
+    internal static readonly AsyncLocal<Func<uint>?> _userIdHook = new();
+}
+#endif
+
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
 internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
@@ -24,11 +31,6 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
     private FileStream? _lockFileStream;
     private bool _ownsLock;
-
-#if INCLUDE_TEST_HOOKS
-    internal static Func<uint>? _userIdHook;
-    internal static Func<string>? _sessionIdHook;
-#endif
 
     /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
     /// <exception cref="SecurityException"></exception>
@@ -43,13 +45,38 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
     /// <exception cref="NotSupportedException"><paramref name="scope"/> is not a supported scope.</exception>
     /// <inheritdoc cref="GetSessionId" path="/exception"/>
-    private static string CreatePipeName(string appId, InstanceLockScope scope) => scope switch
+    // ExceptionAdjustment: M:System.Runtime.InteropServices.MemoryMarshal.AsBytes``1(System.ReadOnlySpan{``0}) -T:System.OverflowException
+    private static string CreatePipeName(string appId, InstanceLockScope scope)
     {
-        InstanceLockScope.Machine => $"si_{appId}",
-        InstanceLockScope.User => $"si_{appId}_user_{getuid()}",
-        InstanceLockScope.Session => $"si_{appId}_session_{GetSessionId()}",
-        _ => throw new NotSupportedException($"{scope} is not a supported scope."),
-    };
+        var rawName = scope switch
+        {
+            InstanceLockScope.Machine => $"si_{appId}",
+            InstanceLockScope.User => $"si_{appId}_user_{getuid()}",
+            InstanceLockScope.Session => $"si_{appId}_session_{GetSessionId()}",
+            _ => throw new NotSupportedException($"{scope} is not a supported scope."),
+        };
+
+        // macOS has a 104-character limit for Unix domain socket paths.
+        // The pipe is created at Path.GetTempPath() + "CoreFxPipe_" + pipeName.
+        // If the pipe name is too long, we hash it to fit safely.
+        if (rawName.Length <= 32) return rawName;
+
+        var rawNameBytes = MemoryMarshal.AsBytes(rawName.AsSpan());
+
+        Span<byte> hash = stackalloc byte[32]; // SHA256 is 32 bytes
+        System.Security.Cryptography.SHA256.HashData(rawNameBytes, hash);
+
+        // Limit to 16 bytes (32 hex characters) to ensure the final socket path length
+        // stays well below the macOS 104-character limit. .NET prepends Path.GetTempPath()
+        // (which can be ~50 chars on macOS) and "CoreFxPipe_".
+        Span<char> hexString = stackalloc char[32];
+        for (var i = 0; i < 16; i++)
+        {
+            _ = hash[i].TryFormat(hexString[(i * 2)..], out _, "x2", CultureInfo.InvariantCulture);
+        }
+
+        return string.Concat("si_", hexString);
+    }
 
     /// <exception cref="SecurityException"></exception>
     /// <exception cref="InvalidOperationException"></exception>
@@ -266,21 +293,70 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     /// <exception cref="SecurityException">The caller is not authorized to retrieve the session ID.</exception>
     private static string GetSessionId()
     {
-#if INCLUDE_TEST_HOOKS
-        if (_sessionIdHook is not null) return _sessionIdHook();
-#endif
-        // Get the Logon Session Identifier (Stable, Session-Specific)
+        // Get the Login Session Identifier (Stable, Session-Specific)
         if (OperatingSystem.IsLinux())
         {
-            // Per requirement, we ONLY check for systemd-logind's variable.
             var sessionId = Environment.GetEnvironmentVariable("XDG_SESSION_ID");
 
-            if (string.IsNullOrEmpty(sessionId))
+            if (!string.IsNullOrEmpty(sessionId))
             {
-                throw new InvalidOperationException("Could not determine systemd logon session. The XDG_SESSION_ID environment variable is not set.");
+                return sessionId;
             }
 
-            return sessionId;
+            // Fallback 1: Systemd Native API
+            try
+            {
+                unsafe
+                {
+                    nint sessionPtr = 0;
+                    var res = sd_pid_get_session(0, &sessionPtr);
+                    if (res >= 0)
+                    {
+#pragma warning disable CA1508 // Avoid dead conditional code (Pointer is mutated by unmanaged code)
+                        if (sessionPtr != 0)
+#pragma warning restore CA1508
+                        {
+                            var sysSession = Marshal.PtrToStringUTF8(sessionPtr);
+                            free(sessionPtr);
+                            if (!string.IsNullOrEmpty(sysSession))
+                            {
+                                return sysSession;
+                            }
+                        }
+                    }
+                    // Negative errno return value. e.g. -ENODATA (-61) meaning process not part of a login session.
+                    // Other errors: -ESRCH, -EINVAL, -ENOMEM.
+                    // We safely fall through to Fallback 2.
+                }
+            }
+            catch (DllNotFoundException)
+            {
+                // Fallback to Fallback 2
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // Fallback to Fallback 2
+            }
+
+            // Fallback 2: Kernel Audit Subsystem
+            const string AuditFilePath = "/proc/self/sessionid";
+            if (File.Exists(AuditFilePath))
+            {
+                try
+                {
+                    var content = File.ReadAllText(AuditFilePath).Trim();
+                    if (content != "4294967295" && !string.IsNullOrEmpty(content))
+                    {
+                        return content;
+                    }
+                }
+                catch
+                {
+                    // Ignore and fall through to throw below
+                }
+            }
+
+            throw new InvalidOperationException("Could not determine login session. The XDG_SESSION_ID environment variable is not set, sd_pid_get_session failed, and the kernel audit subsystem is unavailable or disabled.");
         }
 
         if (OperatingSystem.IsMacOS())
@@ -312,7 +388,7 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
 #if INCLUDE_TEST_HOOKS
 #pragma warning disable IDE1006 // Naming styles
-    private static uint getuid() => _userIdHook?.Invoke() ?? PInvoke.getuid();
+    private static uint getuid() => UnixInstanceLockHooks._userIdHook.Value?.Invoke() ?? PInvoke.getuid();
 #pragma warning restore IDE1006
 #endif
 }
@@ -338,6 +414,12 @@ internal static partial class PInvoke
 
     [LibraryImport("libc", SetLastError = false)]
     public static partial uint getuid();
+
+    [LibraryImport("libc", SetLastError = false)]
+    public static partial void free(nint ptr);
+
+    [LibraryImport("libsystemd.so.0", SetLastError = false)]
+    public static unsafe partial int sd_pid_get_session(int pid, nint* session);
 
     [LibraryImport("/System/Library/Frameworks/Security.framework/Security", SetLastError = false)]
     public static partial int SessionGetInfo(uint session, out uint sessionId, nint pAttributes); // pAttributes is nullable.

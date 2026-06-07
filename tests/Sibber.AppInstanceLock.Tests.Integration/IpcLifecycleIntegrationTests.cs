@@ -154,6 +154,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         var numThreads = 10;
         var startTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var tasks = new Task[numThreads];
+        var executingThreads = 0;
 
         for (var i = 0; i < numThreads; i++)
         {
@@ -163,10 +164,12 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
                 try
                 {
                     var t = backend.RunServerLoop(_ => ValueTask.CompletedTask, null, CancellationToken.None);
+                    Interlocked.Increment(ref executingThreads);
                     await t;
                 }
                 catch (UnreachableException ex)
                 {
+                    Interlocked.Increment(ref executingThreads);
                     ex.Message.ShouldNotBeNull();
                 }
             }, TestContext.Current.CancellationToken);
@@ -176,7 +179,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
 
         await Task.Run(async () =>
         {
-            while (Volatile.Read(ref backend._pipeCts) == null && !TestContext.Current.CancellationToken.IsCancellationRequested)
+            while ((Volatile.Read(ref backend._pipeCts) == null || Volatile.Read(ref executingThreads) < numThreads) && !TestContext.Current.CancellationToken.IsCancellationRequested)
                 await Task.Delay(50, TestContext.Current.CancellationToken);
         }, TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 

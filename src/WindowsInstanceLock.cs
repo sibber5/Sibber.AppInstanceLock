@@ -13,6 +13,14 @@ using Microsoft.Extensions.Logging;
 
 namespace Sibber.AppInstanceLock;
 
+#if INCLUDE_TEST_HOOKS
+internal static class WindowsInstanceLockHooks
+{
+    internal static readonly AsyncLocal<Func<string>?> _userIdHook = new();
+    internal static readonly AsyncLocal<Func<int>?> _sessionIdHook = new();
+}
+#endif
+
 [SupportedOSPlatform("windows")]
 internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 {
@@ -20,12 +28,6 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
     private Mutex? _mutex;
     private bool _ownsMutex;
-
-    // this is only set if the lock scope is InstanceLockScope.User.
-#if INCLUDE_TEST_HOOKS
-    internal static Func<string>? _userIdHook;
-    internal static Func<int>? _sessionIdHook;
-#endif
 
     /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
     /// <exception cref="InvalidOperationException">The current user's <see cref="SecurityIdentifier"/> could not be retrieved.</exception>
@@ -157,7 +159,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     private static string GetUserId()
     {
 #if INCLUDE_TEST_HOOKS
-        if (_userIdHook is not null) return _userIdHook();
+        if (WindowsInstanceLockHooks._userIdHook.Value is { } hook) return hook();
 #endif
         using var id = WindowsIdentity.GetCurrent();
         var sid = id.User?.Value ?? throw new InvalidOperationException("Could not get current user SDDL");
@@ -168,7 +170,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     private static int GetSessionId()
     {
 #if INCLUDE_TEST_HOOKS
-        if (_sessionIdHook is not null) return _sessionIdHook();
+        if (WindowsInstanceLockHooks._sessionIdHook.Value is { } hook) return hook();
 #endif
         using var proc = Process.GetCurrentProcess();
         return proc.SessionId;

@@ -34,6 +34,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
     internal Action? OnBeforePipeCtsLock { get; set; }
     internal Action? OnBeforeServerLoopCleanup { get; set; }
     internal Action? OnBeforeDisposeCtsLock { get; set; }
+    internal Action? OnServerReady { get; set; }
 #endif
 
     protected static readonly bool IsSingleByteMessage = typeof(TMessage) == typeof(byte) || typeof(TMessage) == typeof(sbyte) || typeof(TMessage) == typeof(bool) || (typeof(TMessage).IsEnum && typeof(TMessage).GetEnumUnderlyingType() == typeof(byte));
@@ -191,6 +192,9 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                 {
                     // ReSharper disable once UseAwaitUsing
                     using var pipe = CreatePipeServer(); // recreate server for next connection
+#if INCLUDE_TEST_HOOKS
+                    OnServerReady?.Invoke();
+#endif
                     await pipe.WaitForConnectionAsync(loopCt).ConfigureAwait(false);
 
                     bool read;

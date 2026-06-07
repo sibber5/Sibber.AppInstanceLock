@@ -6,7 +6,6 @@
 
 namespace Sibber.AppInstanceLock.Tests.Unit;
 
-[Collection("StaticHooks")]
 public sealed class PathGenerationTests : UnitTestBase
 {
     [InlineData(InstanceLockScope.User)]
@@ -17,24 +16,16 @@ public sealed class PathGenerationTests : UnitTestBase
     {
         if (!OperatingSystem.IsWindows()) return;
 
-        WindowsInstanceLock<string>._userIdHook = () => "S-1-5-21-1234567890-1234567890-1234567890-1001";
-        WindowsInstanceLock<string>._sessionIdHook = () => 2;
+        WindowsInstanceLockHooks._userIdHook.Value = () => "S-1-5-21-1234567890-1234567890-1234567890-1001";
+        WindowsInstanceLockHooks._sessionIdHook.Value = () => 2;
 
-        try
-        {
-            var appId = UniqueAppId();
-            var options = new InstanceLockOptions { Scope = scope };
-            using var inst = new WindowsInstanceLock<string>(appId, options, null);
+        var appId = UniqueAppId();
+        var options = new InstanceLockOptions { Scope = scope };
+        using var inst = new WindowsInstanceLock<string>(appId, options, null);
 
-            // Just verifying it can be constructed without exception with the mocked identity.
-            // The paths are private, so we'll test the effects by ensuring TryAcquire throws no unexpected exceptions.
-            inst.TryAcquirePrimary().ShouldBeTrue();
-        }
-        finally
-        {
-            WindowsInstanceLock<string>._userIdHook = null;
-            WindowsInstanceLock<string>._sessionIdHook = null;
-        }
+        // Just verifying it can be constructed without exception with the mocked identity.
+        // The paths are private, so we'll test the effects by ensuring TryAcquire throws no unexpected exceptions.
+        inst.TryAcquirePrimary().ShouldBeTrue();
     }
 
     [InlineData(InstanceLockScope.User)]
@@ -45,22 +36,13 @@ public sealed class PathGenerationTests : UnitTestBase
     {
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return;
 
-        UnixInstanceLock<string>._userIdHook = () => 1001;
-        UnixInstanceLock<string>._sessionIdHook = () => "2";
+        UnixInstanceLockHooks._userIdHook.Value = () => 1001;
 
-        try
-        {
-            var appId = UniqueAppId();
-            var options = new InstanceLockOptions { Scope = scope };
-            using var inst = new UnixInstanceLock<string>(appId, options, null);
+        var appId = UniqueAppId();
+        var options = new InstanceLockOptions { Scope = scope };
+        using var inst = new UnixInstanceLock<string>(appId, options, null);
 
-            // Just verifying it can be constructed without exception with the mocked identity
-            inst.TryAcquirePrimary().ShouldBeTrue();
-        }
-        finally
-        {
-            UnixInstanceLock<string>._userIdHook = null;
-            UnixInstanceLock<string>._sessionIdHook = null;
-        }
+        // Just verifying it can be constructed without exception with the mocked identity
+        inst.TryAcquirePrimary().ShouldBeTrue();
     }
 }

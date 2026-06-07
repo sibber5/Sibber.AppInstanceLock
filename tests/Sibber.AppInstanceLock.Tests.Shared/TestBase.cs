@@ -28,6 +28,14 @@ public abstract class TestBase : IDisposable, IAsyncDisposable
 
     protected string UniqueAppId() => $"test-{Prefix}-{Guid.NewGuid():N}";
 
+    protected TestBase()
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            Environment.SetEnvironmentVariable("XDG_SESSION_ID", "ci_mock_session");
+        }
+    }
+
     protected InstanceLock<TMessage> CreateLock<TMessage>(
         string appId,
         Func<TMessage>? createMsg = null,

@@ -74,7 +74,7 @@ public sealed class InstanceLock<TMessage> : IDisposable
     /// One of the parameters <paramref name="createMsgToPrimary"/> and <paramref name="onOtherInstanceOpened"/> is <see langword="null"/> but the other one is not.
     /// </exception>
     /// <exception cref="ArgumentException"><paramref name="appId"/> is empty, or contains invalid characters.</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="appId"/> is longer than 255 characters.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="appId"/> is longer than 128 characters.</exception>
     /// <exception cref="NotSupportedException">The current operating system is not supported. Only Windows, Linux, and macOS are supported.</exception>
     /// <exception cref="System.Security.SecurityException">The caller does not have the required permissions to determine the session or user identity on the current platform.</exception>
     // ExceptionAdjustment: M:System.Guid.ToString(System.String) -T:System.FormatException
@@ -83,7 +83,7 @@ public sealed class InstanceLock<TMessage> : IDisposable
         if (onOtherInstanceOpened is null && createMsgToPrimary is not null) throw new ArgumentNullException(nameof(onOtherInstanceOpened), $"{nameof(onOtherInstanceOpened)} is null, but {nameof(createMsgToPrimary)} is not null.");
         if (createMsgToPrimary is null && onOtherInstanceOpened is not null) throw new ArgumentNullException(nameof(createMsgToPrimary), $"{nameof(createMsgToPrimary)} is null, but {nameof(onOtherInstanceOpened)} is not null.");
         ArgumentNullException.ThrowIfNull(appId);
-        if (appId.Length > 255) throw new ArgumentOutOfRangeException(nameof(appId), "App ID must be 255 characters or less.");
+        if (appId.Length > 128) throw new ArgumentOutOfRangeException(nameof(appId), "App ID must be 128 characters or less.");
         foreach (var c in appId.AsSpan())
         {
             if (!char.IsAsciiLetterOrDigit(c) && c is not ('_' or '-'))
