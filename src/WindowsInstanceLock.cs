@@ -5,6 +5,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO.Pipes;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
@@ -28,6 +29,8 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
     private Mutex? _mutex;
     private bool _ownsMutex;
+    private Thread? _mutexThread;
+    private ManualResetEventSlim? _disposeEvent;
 
     /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
     /// <exception cref="InvalidOperationException">The current user's <see cref="SecurityIdentifier"/> could not be retrieved.</exception>
@@ -69,12 +72,19 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         var security = new MutexSecurity();
         security.AddAccessRule(new(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), MutexRights.FullControl, AccessControlType.Allow));
         security.AddAccessRule(new(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), MutexRights.FullControl, AccessControlType.Allow));
-        security.AddAccessRule(_options.Scope switch
+
+        // Grant the current user FullControl so MutexAcl.Create can successfully return a handle
+        security.AddAccessRule(new(new SecurityIdentifier(GetUserId()), MutexRights.FullControl, AccessControlType.Allow));
+
+        if (_options.Scope is InstanceLockScope.Machine)
         {
-            InstanceLockScope.Machine => new(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), MutexRights.Synchronize, AccessControlType.Allow),
-            InstanceLockScope.User or InstanceLockScope.Session => new(new SecurityIdentifier(GetUserId()), MutexRights.Synchronize, AccessControlType.Allow),
-            _ => throw new NotSupportedException($"{_options.Scope} is not a supported scope."),
-        });
+            security.AddAccessRule(new(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), MutexRights.Synchronize | MutexRights.Modify, AccessControlType.Allow));
+        }
+        else if (_options.Scope is not (InstanceLockScope.User or InstanceLockScope.Session))
+        {
+            throw new NotSupportedException($"{_options.Scope} is not a supported scope.");
+        }
+
         return security;
     }
 
@@ -82,39 +92,86 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     /// <note type="threadunsafe">This method is not thread-safe.</note>
     /// <exception cref="IOException"></exception>
     /// <exception cref="ObjectDisposedException"></exception>
+    [SuppressMessage("ReSharper", "AccessToDisposedClosure")]
     public override bool TryAcquirePrimary()
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
         if (_isPrimary == true) throw new UnreachableException();
 
-        bool createdNew;
-        try
+        using var attemptComplete = new ManualResetEventSlim(false);
+        var success = false;
+
+        var t = new Thread(() =>
         {
-            _mutex = MutexAcl.Create(initiallyOwned: true, _mutexName, out createdNew, CreateMutexSecurity());
-            _ownsMutex = createdNew;
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogDebug(ex, "Mutex creation failed; attempting OpenExisting.");
-            Debug.Assert(!_ownsMutex);
             try
             {
-                _mutex?.Dispose();
-                _mutex = Mutex.OpenExisting(_mutexName);
-                _ownsMutex = false;
-                createdNew = false;
+                _mutex = MutexAcl.Create(initiallyOwned: false, _mutexName, out _, CreateMutexSecurity());
             }
-            catch (Exception openEx)
+            catch (Exception ex)
             {
-                _logger?.LogWarning(openEx, "OpenExisting failed; treating as non-primary.");
-                _mutex = null;
-                _ownsMutex = false;
-                createdNew = false;
+                _logger?.LogDebug(ex, "Mutex creation failed; attempting OpenExisting.");
+                try
+                {
+                    _mutex = Mutex.OpenExisting(_mutexName);
+                }
+                catch (Exception openEx)
+                {
+                    _logger?.LogWarning(openEx, "OpenExisting failed; treating as non-primary.");
+                    attemptComplete.Set();
+                    return;
+                }
             }
-        }
 
-        if (createdNew)
+            try
+            {
+                _ownsMutex = _mutex.WaitOne(0);
+            }
+            catch (AbandonedMutexException)
+            {
+                _ownsMutex = true;
+            }
+
+            if (_ownsMutex)
+            {
+                success = true;
+                _disposeEvent = new ManualResetEventSlim(false);
+                attemptComplete.Set();
+
+                try
+                {
+                    _disposeEvent.Wait();
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Mutex dispose event Wait() unexpectedly threw and exception. Releasing mutex...");
+                }
+
+                try
+                {
+                    _mutex.ReleaseMutex();
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError(ex, "Mutex release failed.");
+                }
+            }
+            else
+            {
+                attemptComplete.Set();
+            }
+        })
         {
+            IsBackground = true,
+            Name = $"Sibber.AppInstanceLock Mutex Thread - {_mutexName}",
+        };
+
+        t.Start();
+
+        attemptComplete.Wait();
+
+        if (success)
+        {
+            _mutexThread = t;
             _logger?.LogDebug("Mutex acquired (primary).");
             _isPrimary = true;
             return true;
@@ -126,32 +183,55 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     }
 
     /// <exception cref="IOException"></exception>
+    /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
+    /// <inheritdoc cref="GetUserId"/>
     protected override NamedPipeServerStream CreatePipeServer()
     {
         var options = PipeOptions.Asynchronous;
-        // For user-scoped (and session-scoped, which falls under user), enforce current-user only to further reduce cross-user interference.
-        if (_options.Scope is InstanceLockScope.User or InstanceLockScope.Session) options |= PipeOptions.CurrentUserOnly;
 
-        // TODO: specify ACL to allow the minimum rights required.
+        var security = new PipeSecurity();
+        security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
+        security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
+
+        var usersRights = PipeAccessRights.ReadWrite | PipeAccessRights.Synchronize;
+
+        if (_options.Scope is InstanceLockScope.Machine)
+        {
+            security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), usersRights, AccessControlType.Allow));
+        }
+        else if (_options.Scope is InstanceLockScope.User or InstanceLockScope.Session)
+        {
+            security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(GetUserId()), usersRights, AccessControlType.Allow));
+        }
+        else
+        {
+            throw new NotSupportedException($"{_options.Scope} is not a supported scope.");
+        }
 
 #pragma warning disable Ex0100 // all of the exceptions that the constructor throws except for IOException are for invalid arguments. none of the arguments being passed in are invalid; _pipeName is sanitized.
-        return new NamedPipeServerStream(
+        return NamedPipeServerStreamAcl.Create(
 #pragma warning restore Ex0100
             _pipeName,
             PipeDirection.In,
             maxNumberOfServerInstances: 1,
             PipeTransmissionMode.Byte,
-            options
+            options,
+            inBufferSize: 0,
+            outBufferSize: 0,
+            security
         );
     }
 
     protected override void DisposeCore()
     {
-        if (_mutex is not null)
+        if (_disposeEvent is not null)
         {
-            if (_ownsMutex) try { _mutex.ReleaseMutex(); } catch { }
-            _mutex.Dispose();
+            _disposeEvent.Set();
+            try { _mutexThread?.Join(); } catch { }
+            _disposeEvent.Dispose();
         }
+
+        _mutex?.Dispose();
     }
 
     /// <exception cref="InvalidOperationException">The <see cref="SecurityIdentifier"/> for the current user was <see langword="null"/>.</exception>

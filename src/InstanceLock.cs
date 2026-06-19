@@ -77,6 +77,7 @@ public sealed class InstanceLock<TMessage> : IDisposable
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="appId"/> is longer than 128 characters.</exception>
     /// <exception cref="NotSupportedException">The current operating system is not supported. Only Windows, Linux, and macOS are supported.</exception>
     /// <exception cref="System.Security.SecurityException">The caller does not have the required permissions to determine the session or user identity on the current platform.</exception>
+    /// <exception cref="InvalidOperationException"></exception>
     // ExceptionAdjustment: M:System.Guid.ToString(System.String) -T:System.FormatException
     public InstanceLock(string appId, Func<TMessage>? createMsgToPrimary = null, Func<TMessage, ValueTask>? onOtherInstanceOpened = null, Func<Exception, bool>? onServerException = null, ILoggerFactory? loggerFactory = null, InstanceLockOptions? options = null)
     {
@@ -165,6 +166,7 @@ public sealed class InstanceLock<TMessage> : IDisposable
     /// <exception cref="OperationCanceledException"></exception>
     /// <exception cref="IOException"></exception>
     /// <exception cref="ObjectDisposedException"></exception>
+    /// <exception cref="UnauthorizedAccessException">Unix Only: Failed to create the lock file because another user has already created a restrictive file at the path.</exception>
     private bool TryAcquireCore(bool notify, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _backend._disposed), this);

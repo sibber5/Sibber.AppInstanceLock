@@ -7,4 +7,9 @@
     <ProjectReference Include="..\..\src\Sibber.AppInstanceLock.csproj" AdditionalProperties="IncludeTestHooks=true" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Meziantou.Extensions.Logging.Xunit.v3" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
 </Project>

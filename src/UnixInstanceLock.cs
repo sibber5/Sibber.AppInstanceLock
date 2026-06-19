@@ -28,9 +28,8 @@ internal static class UnixInstanceLockHooks
 internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 {
     internal readonly string _lockFilePath;
-
+    private readonly bool _isLockFileInSharedDir;
     private FileStream? _lockFileStream;
-    private bool _ownsLock;
 
     /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
     /// <exception cref="SecurityException"></exception>
@@ -39,7 +38,7 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     public UnixInstanceLock(string appId, InstanceLockOptions options, ILogger<UnixInstanceLock<TMessage>>? logger)
         : base(CreatePipeName(appId, options.Scope), options, logger)
     {
-        _lockFilePath = ChooseLockFilePath(appId, _options.Scope, logger);
+        _lockFilePath = ChooseLockFilePath(appId, _options.Scope, logger, out _isLockFileInSharedDir);
         _logger?.LogDebug(nameof(UnixInstanceLock<>) + " initialized: lockFile={Lock} pipe={Pipe}", _lockFilePath, _pipeName);
     }
 
@@ -81,8 +80,9 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     /// <exception cref="SecurityException"></exception>
     /// <exception cref="InvalidOperationException"></exception>
     /// <exception cref="PlatformNotSupportedException">Getting the folder path of the user profile special folder is not supported on the current platform.</exception>
-    private static string ChooseLockFilePath(string appId, InstanceLockScope scope, ILogger? logger)
+    private static string ChooseLockFilePath(string appId, InstanceLockScope scope, ILogger? logger, out bool isLockFileInSharedDir)
     {
+        isLockFileInSharedDir = false;
         // Session scope: use XDG_RUNTIME_DIR or /run/user/{uid}; fall back to /tmp with session id.
         if (scope is InstanceLockScope.Session)
         {
@@ -115,6 +115,7 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
             }
 
             // fallback: /tmp with session id suffix
+            isLockFileInSharedDir = true;
             return Path.Combine(Path.GetTempPath(), $"{appId}_session_{GetSessionId()}.lock");
         }
         // User scope: place lockfile in a location inside the user's home (shared across sessions).
@@ -170,6 +171,7 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
             }
 
             // If we couldn't use home, fallback to /tmp with UID prefix (less ideal).
+            isLockFileInSharedDir = true;
             return Path.Combine(Path.GetTempPath(), $"{appId}_user_{getuid()}.lock");
         }
         // Machine scope: try a standard system lock dir, else /tmp with 'machine' prefix.
@@ -189,6 +191,7 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
             }
 
             // fallback to /tmp
+            isLockFileInSharedDir = true;
             return Path.Combine(Path.GetTempPath(), $"machine_{appId}.lock");
         }
 
@@ -198,6 +201,7 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     /// <remarks></remarks>
     /// <note type="threadunsafe">This method is not thread-safe.</note>
     /// <exception cref="ObjectDisposedException"></exception>
+    /// <exception cref="UnauthorizedAccessException">Failed to create the lock file because another user has already created a restrictive file at the path (lock file squatting).</exception>
     public override bool TryAcquirePrimary()
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
@@ -212,7 +216,18 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
                 try { Directory.CreateDirectory(parent); } catch { /* ignore */ }
             }
 
-            var fs = new FileStream(_lockFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
+            var unixCreateMode = _options.Scope is InstanceLockScope.Machine
+                ? UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite
+                : UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+            var fsOptions = new FileStreamOptions
+            {
+                Mode = FileMode.OpenOrCreate,
+                Access = FileAccess.ReadWrite,
+                Share = FileShare.ReadWrite,
+                UnixCreateMode = unixCreateMode,
+            };
+            var fs = new FileStream(_lockFilePath, fsOptions);
             _lockFileStream = fs;
 
             // get native file descriptor and attempt flock non-blocking exclusive
@@ -231,7 +246,6 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
             if (res is 0)
             {
-                _ownsLock = true;
                 _logger?.LogDebug("Acquired flock on {Path}; primary.", _lockFilePath);
                 _isPrimary = true;
                 return true;
@@ -247,44 +261,51 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
             _logger?.LogDebug("flock failed with errno={Error}; not primary.", err);
             _lockFileStream.Dispose();
             _lockFileStream = null;
-            _ownsLock = false;
             _isPrimary = false;
             return false;
+        }
+        catch (UnauthorizedAccessException ex) when (_isLockFileInSharedDir)
+        {
+            _logger?.LogError(ex, "UnauthorizedAccessException when opening lock file {Path} in a shared temporary directory.", _lockFilePath);
+            throw;
         }
         catch (Exception ex)
         {
             _logger?.LogWarning(ex, "Failed to open/lock {Path}; will act as non-primary.", _lockFilePath);
             _lockFileStream?.Dispose();
             _lockFileStream = null;
-            _ownsLock = false;
             _isPrimary = false;
             return false;
         }
     }
 
-#pragma warning disable Ex0100 // all of the exceptions that the constructor throws except for IOException are for invalid arguments. none of the arguments being passed in are invalid; _pipeName is sanitized.
     /// <exception cref="IOException"></exception>
-    protected override NamedPipeServerStream CreatePipeServer() => new
-#pragma warning restore Ex0100
-    (
-        _pipeName,
-        PipeDirection.In,
-        maxNumberOfServerInstances: 1,
-        PipeTransmissionMode.Byte,
-        PipeOptions.Asynchronous
-    );
-
-    protected override void DisposeCore()
+    /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
+    protected override NamedPipeServerStream CreatePipeServer()
     {
-        _lockFileStream?.Dispose();
+        var options = PipeOptions.Asynchronous;
 
-        if (_ownsLock)
+        if (_options.Scope is InstanceLockScope.User or InstanceLockScope.Session)
         {
-            // best-effort removal of lockfile; do not throw on error
-            try { File.Delete(_lockFilePath); }
-            catch (Exception ex) { _logger?.LogDebug(ex, "Failed to delete lockfile {Path} on dispose (non-fatal).", _lockFilePath); }
+            options |= PipeOptions.CurrentUserOnly;
         }
+        else if (_options.Scope is not InstanceLockScope.Machine)
+        {
+            throw new NotSupportedException($"{_options.Scope} is not a supported scope.");
+        }
+
+#pragma warning disable Ex0100 // all of the exceptions that the constructor throws except for IOException are for invalid arguments. none of the arguments being passed in are invalid; _pipeName is sanitized.
+        return new(
+#pragma warning restore Ex0100
+            _pipeName,
+            PipeDirection.In,
+            maxNumberOfServerInstances: 1,
+            PipeTransmissionMode.Byte,
+            options
+        );
     }
+
+    protected override void DisposeCore() => _lockFileStream?.Dispose();
 
     /// <exception cref="InvalidOperationException">
     /// If on Linux: The environment variable <c>XDG_SESSION_ID</c> is not set (e.g., not a systemd-logind session).<br/>

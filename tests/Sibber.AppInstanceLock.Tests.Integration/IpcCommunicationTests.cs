@@ -339,7 +339,7 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         // Trigger a server-side exception by connecting and sending a malformed length header
         // that indicates a message larger than 1 MiB, causing InvalidOperationException.
         var pipeName = primary._backend._pipeName;
-        using (var maliciousClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.Out))
+        await using (var maliciousClient = new NamedPipeClientStream(".", pipeName, PipeDirection.Out))
         {
             await maliciousClient.ConnectAsync(5000, TestContext.Current.CancellationToken);
             // write a 4-byte LE int with value > 1 MiB to trigger the size guard

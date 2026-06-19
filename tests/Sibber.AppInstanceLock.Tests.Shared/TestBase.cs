@@ -5,6 +5,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System.Runtime.Versioning;
+using Microsoft.Extensions.Logging;
+using Meziantou.Extensions.Logging.Xunit.v3;
 
 #pragma warning disable CA1716 // Identifiers should not match keywords ('Shared' is only a visual basic keyword so who cares)
 namespace Sibber.AppInstanceLock.Tests.Shared;
@@ -44,8 +46,14 @@ public abstract class TestBase : IDisposable, IAsyncDisposable
         InstanceLockOptions? options = null
     )
     {
-        var l = new InstanceLock<TMessage>(appId, createMsg, onOtherInstance, onServerException, options: options);
+        var loggerFactory = LoggerFactory.Create(b =>
+        {
+            b.AddXunit();
+            b.SetMinimumLevel(LogLevel.Debug);
+        });
+        var l = new InstanceLock<TMessage>(appId, createMsg, onOtherInstance, onServerException, options: options, loggerFactory: loggerFactory);
         _disposables.Add(l);
+        _disposables.Add(loggerFactory);
         _serverLoopGetters.Add(() => l._pipeServerLoopTask);
         return l;
     }

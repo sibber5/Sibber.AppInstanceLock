@@ -6,3 +6,6 @@ M:System.IO.Pipes.PipeStream.Flush -T:System.NotSupportedException
 M:System.IO.Pipes.PipeStream.Write(System.ReadOnlySpan{System.Byte}) -T:System.NotSupportedException
 M:System.IO.Pipes.PipeStream.WriteByte(System.Byte) -T:System.NotSupportedException
 M:System.Threading.Interlocked.Exchange``1(``0@,``0) -T:System.NotSupportedException
+P:System.Threading.Thread.IsBackground set -T:System.Threading.ThreadStateException
+M:System.Threading.Thread.Start -T:System.OutOfMemoryException
+M:System.Threading.Thread.Start -T:System.Threading.ThreadStateException

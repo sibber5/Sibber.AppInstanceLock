@@ -54,6 +54,9 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
     /// Creates a new, fresh NamedPipeServerStream (not connected).
     /// </summary>
     /// <exception cref="IOException"></exception>
+    /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
+    /// <exception cref="InvalidOperationException">Windows Only: The <see cref="System.Security.Principal.SecurityIdentifier"/> for the current user was <see langword="null"/>.</exception>
+    /// <exception cref="System.Security.SecurityException">The caller does not have the required permissions to determine the session or user identity on the current platform.</exception>
     protected abstract NamedPipeServerStream CreatePipeServer();
 
     /// <summary>
@@ -67,6 +70,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
     /// <returns><see langword="true"/> if the current instance is the primary instance, otherwise <see langword="false"/>.</returns>
     /// <exception cref="IOException"></exception>
     /// <exception cref="ObjectDisposedException"></exception>
+    /// <exception cref="UnauthorizedAccessException">Unix Only: Failed to create the lock file because another user has already created a restrictive file at the path.</exception>
     public abstract bool TryAcquirePrimary();
 
     /// <summary>
@@ -200,16 +204,20 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                     bool read;
                     TMessage message = default!;
 
+                    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(loopCt);
+                    timeoutCts.CancelAfter(TimeSpan.FromSeconds(3));
+
                     if (IsSingleByteMessage)
                     {
                         Debug.Assert(Unsafe.SizeOf<TMessage>() == 1 && typeof(TMessage).IsValueType);
+                        await using var ctr = timeoutCts.Token.Register(static s => ((Stream)s!).Dispose(), pipe).ConfigureAwait(false);
                         var msgRaw = pipe.ReadByte();
                         read = msgRaw != -1;
                         if (read) message = Unsafe.BitCast<byte, TMessage>((byte)msgRaw);
                     }
                     else
                     {
-                        (read, message) = await TryReadMessage(pipe, loopCt).ConfigureAwait(false);
+                        (read, message) = await TryReadMessage(pipe, timeoutCts.Token).ConfigureAwait(false);
                     }
 
                     if (loopCt.IsCancellationRequested) break;

@@ -17,10 +17,7 @@ public sealed class ConstructorValidationTests : UnitTestBase
     public void Constructor_NullAppId_Throws() => Should.Throw<ArgumentNullException>(() => new InstanceLock<string>(null!));
 
     [Fact]
-    public void Constructor_EmptyAppId_Throws()
-    {
-        Should.Throw<ArgumentException>(() => new InstanceLock<string>(""));
-    }
+    public void Constructor_EmptyAppId_Throws() => Should.Throw<ArgumentException>(() => new InstanceLock<string>(""));
 
     [Fact]
     public void Constructor_InvalidCharsInAppId_Throws()
