@@ -30,11 +30,11 @@ public sealed class ExceptionMappingTests : UnitTestBase
             using var m = MutexAcl.Create(false, mutexName, out var _, security);
             var options = new InstanceLockOptions { Scope = InstanceLockScope.Session };
             using var inst = new WindowsInstanceLock<string>(appId, options, null);
-            inst.TryAcquirePrimary().ShouldBeFalse();
+            Should.Throw<UnauthorizedAccessException>(() => inst.TryAcquirePrimary());
         }
         else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
         {
-            var options = new InstanceLockOptions { Scope = InstanceLockScope.Session };
+            var options = new InstanceLockOptions { Scope = InstanceLockScope.User };
             using var inst = new UnixInstanceLock<string>(appId, options, null);
             var tempPath = inst._lockFilePath;
 
@@ -49,7 +49,7 @@ public sealed class ExceptionMappingTests : UnitTestBase
 
             try
             {
-                inst.TryAcquirePrimary().ShouldBeFalse();
+                Should.Throw<UnauthorizedAccessException>(() => inst.TryAcquirePrimary());
             }
             finally
             {

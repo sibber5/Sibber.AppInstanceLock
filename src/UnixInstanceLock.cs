@@ -28,7 +28,6 @@ internal static class UnixInstanceLockHooks
 internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 {
     internal readonly string _lockFilePath;
-    private readonly bool _isLockFileInSharedDir;
     private FileStream? _lockFileStream;
 
     /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
@@ -38,7 +37,7 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     public UnixInstanceLock(string appId, InstanceLockOptions options, ILogger<UnixInstanceLock<TMessage>>? logger)
         : base(CreatePipeName(appId, options.Scope), options, logger)
     {
-        _lockFilePath = ChooseLockFilePath(appId, _options.Scope, logger, out _isLockFileInSharedDir);
+        _lockFilePath = ChooseLockFilePath(appId, _options.Scope, logger);
         _logger?.LogDebug(nameof(UnixInstanceLock<>) + " initialized: lockFile={Lock} pipe={Pipe}", _lockFilePath, _pipeName);
     }
 
@@ -80,9 +79,8 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     /// <exception cref="SecurityException"></exception>
     /// <exception cref="InvalidOperationException"></exception>
     /// <exception cref="PlatformNotSupportedException">Getting the folder path of the user profile special folder is not supported on the current platform.</exception>
-    private static string ChooseLockFilePath(string appId, InstanceLockScope scope, ILogger? logger, out bool isLockFileInSharedDir)
+    private static string ChooseLockFilePath(string appId, InstanceLockScope scope, ILogger? logger)
     {
-        isLockFileInSharedDir = false;
         // Session scope: use XDG_RUNTIME_DIR or /run/user/{uid}; fall back to /tmp with session id.
         if (scope is InstanceLockScope.Session)
         {
@@ -115,7 +113,6 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
             }
 
             // fallback: /tmp with session id suffix
-            isLockFileInSharedDir = true;
             return Path.Combine(Path.GetTempPath(), $"{appId}_session_{GetSessionId()}.lock");
         }
         // User scope: place lockfile in a location inside the user's home (shared across sessions).
@@ -171,7 +168,6 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
             }
 
             // If we couldn't use home, fallback to /tmp with UID prefix (less ideal).
-            isLockFileInSharedDir = true;
             return Path.Combine(Path.GetTempPath(), $"{appId}_user_{getuid()}.lock");
         }
         // Machine scope: try a standard system lock dir, else /tmp with 'machine' prefix.
@@ -191,7 +187,6 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
             }
 
             // fallback to /tmp
-            isLockFileInSharedDir = true;
             return Path.Combine(Path.GetTempPath(), $"machine_{appId}.lock");
         }
 
@@ -264,9 +259,9 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
             _isPrimary = false;
             return false;
         }
-        catch (UnauthorizedAccessException ex) when (_isLockFileInSharedDir)
+        catch (UnauthorizedAccessException ex)
         {
-            _logger?.LogError(ex, "UnauthorizedAccessException when opening lock file {Path} in a shared temporary directory.", _lockFilePath);
+            _logger?.LogError(ex, "UnauthorizedAccessException when opening lock file {Path}.", _lockFilePath);
             throw;
         }
         catch (Exception ex)

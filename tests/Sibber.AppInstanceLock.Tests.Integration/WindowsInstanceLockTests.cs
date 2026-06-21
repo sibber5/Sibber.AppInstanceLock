@@ -329,7 +329,7 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
     }
 
     [Fact]
-    public void TryAcquirePrimary_WhenMutexCreationAndOpenFail_ReturnsFalse()
+    public void TryAcquirePrimary_WhenMutexCreationAndOpenFail_ThrowsUnauthorizedAccessException()
     {
         if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
 
@@ -345,9 +345,7 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         createdNew.ShouldBeTrue();
 
         using var instanceLock = new WindowsInstanceLock<string>(appId, options, null);
-        var isPrimary = instanceLock.TryAcquirePrimary();
-
-        isPrimary.ShouldBeFalse();
+        Should.Throw<UnauthorizedAccessException>(() => instanceLock.TryAcquirePrimary());
     }
 
     [Fact]

@@ -7,6 +7,7 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Pipes;
+using System.Runtime.ExceptionServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -100,6 +101,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
         using var attemptComplete = new ManualResetEventSlim(false);
         var success = false;
+        ExceptionDispatchInfo? threadExceptionInfo = null;
 
         var t = new Thread(() =>
         {
@@ -113,6 +115,13 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
                 try
                 {
                     _mutex = Mutex.OpenExisting(_mutexName);
+                }
+                catch (UnauthorizedAccessException openUae)
+                {
+                    _logger?.LogError(openUae, "UnauthorizedAccessException when opening mutex {Mutex}.", _mutexName);
+                    threadExceptionInfo = ExceptionDispatchInfo.Capture(openUae);
+                    attemptComplete.Set();
+                    return;
                 }
                 catch (Exception openEx)
                 {
@@ -168,6 +177,8 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
         t.Start();
 
         attemptComplete.Wait();
+
+        threadExceptionInfo?.Throw();
 
         if (success)
         {
