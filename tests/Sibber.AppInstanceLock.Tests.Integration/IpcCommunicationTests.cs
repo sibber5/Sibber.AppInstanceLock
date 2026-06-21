@@ -360,8 +360,6 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         serverTask?.Status.ShouldBe(TaskStatus.RanToCompletion);
     }
 
-
-
     // ──────────────────────────────────────────────────────────────────────
     // INVARIANT: Notification with no IPC configured is a no-op
     // "If createMsgToPrimary and onOtherInstanceOpened are null, no IPC occurs."

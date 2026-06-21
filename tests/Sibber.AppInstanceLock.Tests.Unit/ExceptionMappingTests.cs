@@ -14,7 +14,7 @@ public sealed class ExceptionMappingTests : UnitTestBase
         if (OperatingSystem.IsLinux() && Environment.UserName == "root")
         {
             // GitHub Actions CI Note: Linux runners execute as root, bypassing standard Unix file permission restrictions.
-            return;
+            Assert.Skip("Test is running as root, this bypasses standard Unix file permission restrictions which makes the test pointless.");
         }
 
         var appId = UniqueAppId();

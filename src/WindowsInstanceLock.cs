@@ -44,7 +44,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
     /// <exception cref="NotSupportedException"><paramref name="scope"/> is not a supported scope.</exception>
     /// <inheritdoc cref="GetUserId"/>
-    private static string CreatePipeName(string appId, InstanceLockScope scope) => scope switch
+    internal static string CreatePipeName(string appId, InstanceLockScope scope) => scope switch
     { // Named pipe names on Windows are relative, e.g. \\.\pipe\<name>. Keep them simple.
         InstanceLockScope.Machine => $"si_{appId}",
         InstanceLockScope.User => $"si_{appId}_user_{GetUserId()}",
@@ -55,7 +55,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
     /// <exception cref="NotSupportedException"><paramref name="scope"/> is not a supported scope.</exception>
     /// <inheritdoc cref="GetUserId"/>
-    private static string CreateMutexName(string appId, InstanceLockScope scope) => scope switch
+    internal static string CreateMutexName(string appId, InstanceLockScope scope) => scope switch
     {
         InstanceLockScope.Machine => @$"Global\{appId}",
         InstanceLockScope.User => @$"Global\{appId}_user_{GetUserId()}",

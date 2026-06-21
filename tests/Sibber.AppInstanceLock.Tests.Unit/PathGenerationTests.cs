@@ -14,7 +14,7 @@ public sealed class PathGenerationTests : UnitTestBase
     [Theory]
     public void Windows_PathGeneration_And_Isolation(InstanceLockScope scope)
     {
-        if (!OperatingSystem.IsWindows()) return;
+        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
 
         WindowsInstanceLockHooks._userIdHook.Value = () => "S-1-5-21-1234567890-1234567890-1234567890-1001";
         WindowsInstanceLockHooks._sessionIdHook.Value = () => 2;
@@ -34,7 +34,7 @@ public sealed class PathGenerationTests : UnitTestBase
     [Theory]
     public void Unix_PathGeneration_And_Isolation(InstanceLockScope scope)
     {
-        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return;
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) Assert.Skip("Unix only");
 
         UnixInstanceLockHooks._userIdHook.Value = () => 1001;
 
