@@ -313,6 +313,52 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
     // ──────────────────────────────────────────────────────────────────────
 
     [Fact]
+    public async Task ServerLoop_SingleByteTimeout_BrutalDisposeRecovers()
+    {
+        var appId = UniqueAppId();
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var primary = new InstanceLock<bool>(
+            appId,
+            createMsgToPrimary: () => true,
+            onOtherInstanceOpened: msg =>
+            {
+                tcs.TrySetResult(msg);
+                return ValueTask.CompletedTask;
+            }
+        );
+        _disposables.Add(primary);
+
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
+
+        var pipeName = primary._backend._pipeName;
+
+        // 1. Malicious or broken client connects but sends NOTHING.
+        await using (var brokenClient = new NamedPipeClientStream(".", pipeName, PipeDirection.Out))
+        {
+            await brokenClient.ConnectAsync(3000, TestContext.Current.CancellationToken);
+
+            // Wait for 4 seconds to trigger the 3-second timeout inside the primary server loop.
+            // This forces the "brutal dispose" path on the single-byte fast path.
+            await Task.Delay(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
+        }
+
+        // 2. The primary server should have cleanly caught the ObjectDisposedException, broken out, and rebuilt the pipe.
+        // A legitimate secondary should now be able to connect and successfully notify the primary.
+        var secondary = new InstanceLock<bool>(
+            appId,
+            createMsgToPrimary: () => true,
+            onOtherInstanceOpened: _ => ValueTask.CompletedTask
+        );
+        _disposables.Add(secondary);
+
+        secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        received.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task ServerLoop_OnServerExceptionReturnsFalse_ServerTerminates()
     {
         var appId = UniqueAppId();

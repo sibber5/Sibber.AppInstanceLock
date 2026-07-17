@@ -190,13 +190,15 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
         async Task RunLoop(CancellationToken loopCt)
         {
+            // ReSharper disable once UseAwaitUsing
+            using var pipe = CreatePipeServer(); // Let exceptions bubble up to outer retry policy.
+#if INCLUDE_TEST_HOOKS
+            OnServerReady?.Invoke();
+#endif
             while (!loopCt.IsCancellationRequested)
             {
-                // ReSharper disable once UseAwaitUsing
-                using var pipe = CreatePipeServer(); // Recreate server for next connection. Let exceptions bubble up to outer retry policy.
-#if INCLUDE_TEST_HOOKS
-                OnServerReady?.Invoke();
-#endif
+                Exception? finalEx = null;
+                var brutallyDisposed = false;
                 try
                 {
                     await pipe.WaitForConnectionAsync(loopCt).ConfigureAwait(false);
@@ -207,17 +209,27 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(loopCt);
                     timeoutCts.CancelAfter(TimeSpan.FromSeconds(3));
 
-                    if (IsSingleByteMessage)
+                    try
                     {
-                        Debug.Assert(Unsafe.SizeOf<TMessage>() == 1 && typeof(TMessage).IsValueType);
-                        await using var ctr = timeoutCts.Token.Register(static s => ((Stream)s!).Dispose(), pipe).ConfigureAwait(false);
-                        var msgRaw = pipe.ReadByte();
-                        read = msgRaw != -1;
-                        if (read) message = Unsafe.BitCast<byte, TMessage>((byte)msgRaw);
+                        if (IsSingleByteMessage)
+                        {
+                            Debug.Assert(Unsafe.SizeOf<TMessage>() == 1 && typeof(TMessage).IsValueType);
+                            brutallyDisposed = true;
+                            await using var ctr = timeoutCts.Token.Register(static s => ((Stream)s!).Dispose(), pipe).ConfigureAwait(false);
+                            var msgRaw = pipe.ReadByte();
+                            read = msgRaw != -1;
+                            if (read) message = Unsafe.BitCast<byte, TMessage>((byte)msgRaw);
+                        }
+                        else
+                        {
+                            (read, message) = await TryReadMessage(pipe, timeoutCts.Token).ConfigureAwait(false);
+                        }
                     }
-                    else
+                    catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !loopCt.IsCancellationRequested)
                     {
-                        (read, message) = await TryReadMessage(pipe, timeoutCts.Token).ConfigureAwait(false);
+                        // Timed out reading the message from the connected client
+                        _logger?.LogInformation("Primary instance pipe server timed out waiting for message data.");
+                        read = false;
                     }
 
                     if (loopCt.IsCancellationRequested) break;
@@ -243,6 +255,36 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                 catch (IOException ioEx)
                 {
                     _logger?.LogDebug(ioEx, "Primary instance pipe server threw IOException during connection/read. Client might have disconnected early.");
+                }
+                catch (Exception ex)
+                {
+                    finalEx = ex;
+                }
+                finally
+                {
+                    try
+                    {
+                        pipe.Disconnect();
+                    }
+                    catch (ObjectDisposedException) when (brutallyDisposed)
+                    {
+                        // Expected if the pipe was brutally disposed by the fast-path timeout.
+                    }
+                    catch (InvalidOperationException ex) when (ex is not ObjectDisposedException)
+                    {
+                        // Expected if no connection was made or client already disconnected.
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogDebug(ex, "Primary instance pipe server threw exception during Disconnect().");
+                        // If we can't disconnect, the pipe is likely in a bad state, so throw to trigger outer retry logic which will recreate it.
+                        if (finalEx is null) finalEx = ex;
+                        else finalEx = new AggregateException(finalEx, ex);
+                    }
+
+#pragma warning disable CA2219 // Do not raise exceptions in finally clauses
+                    if (finalEx is not null) throw finalEx;
+#pragma warning restore CA2219
                 }
             }
         }
