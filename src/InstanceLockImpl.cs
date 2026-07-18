@@ -8,18 +8,18 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Runtime.CompilerServices;
-using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
 
 namespace Sibber.AppInstanceLock;
 
-internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLockOptions options, ILogger? logger) : IDisposable
+internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLockOptions options, ILogger? logger, JsonTypeInfo<TMessage>? jsonTypeInfo) : IDisposable
 {
     internal readonly string _pipeName = pipeName;
     protected readonly InstanceLockOptions _options = options;
     protected readonly ILogger? _logger = logger;
+    protected readonly JsonTypeInfo<TMessage>? _jsonTypeInfo = jsonTypeInfo;
 
 #pragma warning disable CA2213 // Disposable fields should be disposed - it is disposed.
     internal CancellationTokenSource? _pipeCts;
@@ -37,18 +37,9 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
     internal Action? OnServerReady { get; set; }
 #endif
 
-    protected static readonly bool IsSingleByteMessage = typeof(TMessage) == typeof(byte) || typeof(TMessage) == typeof(sbyte) || typeof(TMessage) == typeof(bool) || (typeof(TMessage).IsEnum && typeof(TMessage).GetEnumUnderlyingType() == typeof(byte));
-
-    // ReSharper disable once StaticMemberInGenericType - fine since there will likely only be a single instantiation of it for the whole program.
-    private static readonly JsonSerializerOptions _jsonOptions = new()
-    {
-        WriteIndented = false,
-        PropertyNameCaseInsensitive = false,
-        AllowTrailingCommas = false,
-        ReadCommentHandling = JsonCommentHandling.Disallow,
-        DefaultIgnoreCondition = JsonIgnoreCondition.Never,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-    };
+    internal static readonly bool _isSingleByteMessage
+        = typeof(TMessage) == typeof(byte) || typeof(TMessage) == typeof(sbyte) || typeof(TMessage) == typeof(bool)
+          || (typeof(TMessage).IsEnum && (typeof(TMessage).GetEnumUnderlyingType() == typeof(byte) || typeof(TMessage).GetEnumUnderlyingType() == typeof(sbyte)));
 
     /// <summary>
     /// Creates a new, fresh NamedPipeServerStream (not connected).
@@ -78,17 +69,34 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
     /// messages from secondary instances and dispatches them to <paramref name="onMessage"/>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The returned <see cref="Task"/> completes when the server loop terminates (due to cancellation,
-    /// dispose, or exhausting retries). It does not fault; all exceptions are handled internally via
-    /// <paramref name="onException"/> and the configured <see cref="InstanceServerRetryPolicy"/>.
+    /// dispose, or exhausting retries). It does not fault (except for if <paramref name="onException"/> throws, see the documentation for <c>onServerException</c> in <see cref="InstanceLock{TMessage}(string,Func{TMessage},Func{TMessage, ValueTask},Func{Exception, bool},ILoggerFactory,InstanceLockOptions,JsonTypeInfo{TMessage})"/>);
+    /// all exceptions are handled internally via <paramref name="onException"/> and the configured <see cref="InstanceServerRetryPolicy"/>.
     /// <br/>
     /// Exceptions thrown by <paramref name="onMessage"/> are caught and logged, but do not terminate
     /// the server loop and are not passed to <paramref name="onException"/>.
+    /// </para>
+    /// <para>
+    /// The <paramref name="onMessage"/> callback is awaited before processing the next incoming connection.
+    /// If the callback performs long-running synchronous work or yields an incomplete <see cref="ValueTask"/> that takes a long time to complete,
+    /// it will block the server loop from accepting new messages. Consumers should dispatch long-running work to a background thread
+    /// or queue if concurrent message processing is required.
+    /// </para>
+    /// <para>
+    /// This method does not accept a <see cref="CancellationToken"/> parameter. The server loop is explicitly
+    /// tied to the lifetime of the <see cref="InstanceLock{TMessage}"/> and will be gracefully stopped
+    /// when the instance is disposed.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="onMessage"/> is <see langword="null"/>.</exception>
     /// <exception cref="ObjectDisposedException">This instance has been disposed.</exception>
-    public Task RunServerLoop(Func<TMessage, ValueTask> onMessage, Func<Exception, bool>? onException, CancellationToken ct)
+    public Task RunServerLoop(Func<TMessage, ValueTask> onMessage, Func<Exception, bool>? onException)
     {
+        // This method intentionally does not accept a CancellationToken.
+        // The server loop lifecycle is strictly tied to the InstanceLock instance
+        // and is gracefully stopped upon disposal via _pipeCts.
+
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
         if (_isPrimary != true) throw new UnreachableException();
         if (Volatile.Read(ref _pipeCts) is not null) throw new UnreachableException($"{nameof(_pipeCts)} is not null. Cannot run server loop while notifying primary instance.");
@@ -98,6 +106,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
         return Task.Run(async () =>
 #pragma warning restore Ex0100
         {
+            CancellationToken ct;
 #if INCLUDE_TEST_HOOKS
             OnBeforePipeCtsLock?.Invoke();
 #endif
@@ -106,8 +115,8 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                 try
                 {
                     if (Volatile.Read(ref _disposed)) return;
-                    if (_pipeCts is not null || ct.IsCancellationRequested) return;
-                    _pipeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    if (_pipeCts is not null) return;
+                    _pipeCts = new CancellationTokenSource();
                     ct = _pipeCts.Token;
                 }
                 catch (Exception ex)
@@ -186,7 +195,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
                 _logger?.LogInformation("Primary instance pipe server loop terminated.");
             }
-        }, CancellationToken.None); // don't pass ct because we don't want the returned task to throw, and it's very unlikely for the ct to get canceled before the task runs.
+        });
 
         async Task RunLoop(CancellationToken loopCt)
         {
@@ -211,7 +220,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
                     try
                     {
-                        if (IsSingleByteMessage)
+                        if (_isSingleByteMessage)
                         {
                             Debug.Assert(Unsafe.SizeOf<TMessage>() == 1 && typeof(TMessage).IsValueType);
                             brutallyDisposed = true;
@@ -229,6 +238,16 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                     {
                         // Timed out reading the message from the connected client
                         _logger?.LogInformation("Primary instance pipe server timed out waiting for message data.");
+                        read = false;
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger?.LogWarning(ex, "Failed to deserialize message from client.");
+                        read = false;
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        _logger?.LogWarning(ex, "Received invalid message data from client.");
                         read = false;
                     }
 
@@ -289,7 +308,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
             }
         }
 
-        static async ValueTask<(bool, TMessage)> TryReadMessage(NamedPipeServerStream pipe, CancellationToken ct)
+        async ValueTask<(bool, TMessage)> TryReadMessage(NamedPipeServerStream pipe, CancellationToken ct)
         {
             var buf = new byte[256];
 
@@ -305,8 +324,8 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
             var length = BinaryPrimitives.ReadInt32LittleEndian(lenBuf.Span);
             const int OneMiB = 1024 * 1024;
-            if (length > OneMiB) throw new InvalidOperationException($"Message is too large. Maximum length is 1,048,576 bytes (1MiB). Message length is {length} bytes.");
-            if (length < 0) throw new InvalidOperationException($"Message length is less than 0 bytes. ({length} bytes)");
+            if (length > OneMiB) throw new InvalidDataException($"Message is too large. Maximum length is 1,048,576 bytes (1MiB). Message length is {length} bytes.");
+            if (length < 0) throw new InvalidDataException($"Message length is less than 0 bytes. ({length} bytes)");
             if (length == 0) return (true, default!);
 
             var msgBuf = length <= buf.Length ? buf.AsMemory(0, length) : new byte[length];
@@ -319,7 +338,8 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
                 throw new IOException($"{nameof(EndOfStreamException)} was thrown before fully reading message. Pipe possibly unexpectedly disconnected.", ex);
             }
 
-            var msg = JsonSerializer.Deserialize<TMessage>(msgBuf.Span, _jsonOptions);
+            Debug.Assert(_jsonTypeInfo is not null);
+            var msg = JsonSerializer.Deserialize(msgBuf.Span, _jsonTypeInfo);
             return (true, msg!); // the message that is deserialized was serialized from TMessage, so if TMessage is a non-nullable reference type, msg is guaranteed to be non-null.
         }
     }
@@ -327,6 +347,8 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
     /// <exception cref="ArgumentException">The serialized message exceeds 1 MiB (1,048,576 bytes).</exception>
     /// <exception cref="ObjectDisposedException"></exception>
     // ExceptionAdjustment: P:System.Array.Length -T:System.OverflowException
+    // ExceptionAdjustment: M:System.Threading.WaitHandle.WaitOne(System.TimeSpan) -T:System.Threading.AbandonedMutexException
+    // ExceptionAdjustment: M:System.TimeSpan.FromMilliseconds(System.Double) -T:System.OverflowException
     public void NotifyExistingInstance(Func<TMessage> createMsgToPrimary, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
@@ -343,16 +365,14 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
         _logger?.LogDebug(nameof(NotifyExistingInstance) + ": notify primary via pipe={Pipe}", _pipeName);
 
-        // the best way I could find to do a cancellable synchronous wait (for the delay between retries).
-        // we create the object only if the first attempt fails, because in most cases it probably won't.
-        ManualResetEventSlim? infWaitEvent = null;
         try
         {
 #pragma warning disable Ex0100 // NotSupportedException from BitCast and SerializeToUtf8Bytes (which wont happen)
-            Debug.Assert(!IsSingleByteMessage || (Unsafe.SizeOf<TMessage>() == 1 && typeof(TMessage).IsValueType));
-            var message = IsSingleByteMessage
+            Debug.Assert(!_isSingleByteMessage || (Unsafe.SizeOf<TMessage>() == 1 && typeof(TMessage).IsValueType));
+            Debug.Assert(_isSingleByteMessage || _jsonTypeInfo is not null);
+            var message = _isSingleByteMessage
                 ? [Unsafe.BitCast<TMessage, byte>(createMsgToPrimary())]
-                : JsonSerializer.SerializeToUtf8Bytes(createMsgToPrimary(), _jsonOptions);
+                : JsonSerializer.SerializeToUtf8Bytes(createMsgToPrimary(), _jsonTypeInfo!);
 #pragma warning restore Ex0100
 
             const int OneMiB = 1024 * 1024;
@@ -369,21 +389,14 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
                 if (_options.NotificationRetryPolicy.MaxJitterDelay <= TimeSpan.Zero) continue;
 
+                var delay = Random.Shared.NextDouble() * _options.NotificationRetryPolicy.MaxJitterDelay;
                 try
                 {
-                    var delay = Random.Shared.NextDouble() * _options.NotificationRetryPolicy.MaxJitterDelay;
-                    infWaitEvent ??= new(false);
                     // synchronously block here to halt the secondary instance from continuing its startup sequence while we attempt to notify the primary instance.
-                    infWaitEvent.Wait(delay, ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
+                    ct.WaitHandle.WaitOne(delay);
                 }
                 catch (ObjectDisposedException)
                 {
-                    _logger?.LogWarning(nameof(NotifyExistingInstance) + ": attempted to wait before a retry but '" + nameof(infWaitEvent) + "' was disposed, unexpectedly. assuming the CT was cancelled...");
-                    infWaitEvent = null;
                     break;
                 }
             }
@@ -394,7 +407,6 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
         {
             var cts = Interlocked.Exchange(ref _pipeCts, null);
             cts?.Dispose();
-            infWaitEvent?.Dispose();
         }
     }
 
@@ -408,7 +420,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
         {
             client.Connect(connectTimeout);
 
-            if (IsSingleByteMessage)
+            if (_isSingleByteMessage)
             {
                 Debug.Assert(message.Length is 1);
                 client.WriteByte(message[0]);

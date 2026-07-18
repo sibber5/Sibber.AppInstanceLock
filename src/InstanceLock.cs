@@ -6,6 +6,9 @@
 
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
 
 namespace Sibber.AppInstanceLock;
@@ -59,19 +62,37 @@ public sealed class InstanceLock<TMessage> : IDisposable
     /// Exceptions thrown by this callback are caught, logged, and swallowed to keep the IPC server alive.
     /// If you need to handle exceptions programmatically, use a <see langword="try"/>/<see langword="catch"/> block inside the callback.
     /// </para>
+    /// <para>
+    /// The callback is awaited before processing the next incoming connection. If the callback performs long-running
+    /// synchronous work or yields an incomplete <see cref="ValueTask"/> that takes a long time to complete, it will block
+    /// the server loop from accepting new messages. Dispatch long-running work to a background thread if concurrent
+    /// message processing is required.
+    /// </para>
     /// </param>
     /// <param name="onServerException">
+    /// <para>
     /// Invoked when an exception is thrown by the IPC server that listens for notifications from other instances that try to acquire the lock.
-    /// If the return value is <see langword="false"/> the server will terminate, otherwise it will be restarted according to the <see cref="InstanceServerRetryPolicy"/>.
-    /// <br/>
+    /// </para>
+    /// <para>
+    /// Return <see langword="true"/> to restart the server according to the <see cref="InstanceServerRetryPolicy"/>.<br/>
+    /// Return <see langword="false"/> to terminate the server silently; the server will log the exception at <see cref="LogLevel.Information"/> and will not rethrow it (if a non-null <paramref name="loggerFactory"/> was passed).
+    /// </para>
+    /// <para>
+    /// If this callback throws an exception, the server loop will immediately terminate and the exception will be captured in the returned <see cref="Task"/> (if applicable), or become an unobserved task exception. The server will not restart.
+    /// </para>
+    /// <para>
     /// See remarks for <see cref="TryAcquireOrNotify"/> for more details.
+    /// </para>
     /// </param>
     /// <param name="loggerFactory">An optional logger factory if logging by the <see cref="InstanceLock{TMessage}"/> is desired.</param>
     /// <param name="options">The configuration options.</param>
+    /// <param name="messageJsonTypeInfo">The JSON type info used for serializing and deserializing <typeparamref name="TMessage"/>. Required (for AOT compatibility) unless <typeparamref name="TMessage"/> is a single-byte type (e.g. byte or bool).</param>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="appId"/> is <see langword="null"/>.<br/>
     /// - OR -<br/>
-    /// One of the parameters <paramref name="createMsgToPrimary"/> and <paramref name="onOtherInstanceOpened"/> is <see langword="null"/> but the other one is not.
+    /// One of the parameters <paramref name="createMsgToPrimary"/> and <paramref name="onOtherInstanceOpened"/> is <see langword="null"/> but the other one is not.<br/>
+    /// - OR -<br/>
+    /// <paramref name="messageJsonTypeInfo"/> is <see langword="null"/> and <typeparamref name="TMessage"/> is not a single-byte type.
     /// </exception>
     /// <exception cref="ArgumentException"><paramref name="appId"/> is empty, or contains invalid characters.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="appId"/> is longer than 128 characters.</exception>
@@ -79,7 +100,7 @@ public sealed class InstanceLock<TMessage> : IDisposable
     /// <exception cref="System.Security.SecurityException">The caller does not have the required permissions to determine the session or user identity on the current platform.</exception>
     /// <exception cref="InvalidOperationException"></exception>
     // ExceptionAdjustment: M:System.Guid.ToString(System.String) -T:System.FormatException
-    public InstanceLock(string appId, Func<TMessage>? createMsgToPrimary = null, Func<TMessage, ValueTask>? onOtherInstanceOpened = null, Func<Exception, bool>? onServerException = null, ILoggerFactory? loggerFactory = null, InstanceLockOptions? options = null)
+    public InstanceLock(string appId, Func<TMessage>? createMsgToPrimary = null, Func<TMessage, ValueTask>? onOtherInstanceOpened = null, Func<Exception, bool>? onServerException = null, ILoggerFactory? loggerFactory = null, InstanceLockOptions? options = null, JsonTypeInfo<TMessage>? messageJsonTypeInfo = null)
     {
         if (onOtherInstanceOpened is null && createMsgToPrimary is not null) throw new ArgumentNullException(nameof(onOtherInstanceOpened), $"{nameof(onOtherInstanceOpened)} is null, but {nameof(createMsgToPrimary)} is not null.");
         if (createMsgToPrimary is null && onOtherInstanceOpened is not null) throw new ArgumentNullException(nameof(createMsgToPrimary), $"{nameof(createMsgToPrimary)} is null, but {nameof(onOtherInstanceOpened)} is not null.");
@@ -93,6 +114,21 @@ public sealed class InstanceLock<TMessage> : IDisposable
             }
         }
 
+        if (!InstanceLockImpl<TMessage>._isSingleByteMessage && messageJsonTypeInfo is null)
+        {
+            throw new ArgumentNullException(nameof(messageJsonTypeInfo), $"A valid {nameof(JsonTypeInfo<>)} must be provided for message types that are not single-byte.");
+        }
+
+        if (messageJsonTypeInfo is not null)
+        {
+            var optimizedOptions = new JsonSerializerOptions(messageJsonTypeInfo.Options)
+            {
+                WriteIndented = false,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            };
+            messageJsonTypeInfo = (JsonTypeInfo<TMessage>)optimizedOptions.GetTypeInfo(typeof(TMessage));
+        }
+
         _appId = appId;
         _createMsgToPrimary = createMsgToPrimary;
         _onOtherInstanceOpened = onOtherInstanceOpened;
@@ -102,11 +138,11 @@ public sealed class InstanceLock<TMessage> : IDisposable
         _logger = loggerFactory?.CreateLogger<InstanceLock<TMessage>>();
         if (OperatingSystem.IsWindows())
         {
-            _backend = new WindowsInstanceLock<TMessage>(_appId, _options, loggerFactory?.CreateLogger<WindowsInstanceLock<TMessage>>());
+            _backend = new WindowsInstanceLock<TMessage>(_appId, _options, loggerFactory?.CreateLogger<WindowsInstanceLock<TMessage>>(), messageJsonTypeInfo);
         }
         else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
         {
-            _backend = new UnixInstanceLock<TMessage>(_appId, _options, loggerFactory?.CreateLogger<UnixInstanceLock<TMessage>>());
+            _backend = new UnixInstanceLock<TMessage>(_appId, _options, loggerFactory?.CreateLogger<UnixInstanceLock<TMessage>>(), messageJsonTypeInfo);
         }
         else
         {
@@ -179,7 +215,7 @@ public sealed class InstanceLock<TMessage> : IDisposable
         if (isPrimary)
         {
             _logger?.LogInformation("Acquired primary instance lock: appId={AppId}, options={Options}", _appId, _options);
-            if (_onOtherInstanceOpened is not null && _pipeServerLoopTask is null) _pipeServerLoopTask = _backend.RunServerLoop(_onOtherInstanceOpened, _onServerException, ct);
+            if (_onOtherInstanceOpened is not null && _pipeServerLoopTask is null) _pipeServerLoopTask = _backend.RunServerLoop(_onOtherInstanceOpened, _onServerException);
         }
         else
         {

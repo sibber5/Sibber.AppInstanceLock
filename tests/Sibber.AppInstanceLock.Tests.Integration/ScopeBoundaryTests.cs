@@ -8,11 +8,6 @@ namespace Sibber.AppInstanceLock.Tests.Integration;
 
 public sealed class ScopeBoundaryTests : IntegrationTestBase
 {
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: Scope isolation (same-user, same-session, same-machine)
-    // All three scopes within the same process produce distinct lock names.
-    // ──────────────────────────────────────────────────────────────────────
-
     [InlineData(InstanceLockScope.Session)]
     [InlineData(InstanceLockScope.User)]
     [InlineData(InstanceLockScope.Machine)]

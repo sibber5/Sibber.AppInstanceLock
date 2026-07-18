@@ -16,6 +16,22 @@ namespace Sibber.AppInstanceLock.Tests.Integration;
 /// </summary>
 public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
 {
+    // This test intentionally couples to internal fields (_pipeCts) and test hooks (OnBeforePipeCtsLock).
+    // While this makes it a "change detector" tied to the current CancellationTokenSource implementation,
+    // this tight coupling is required to achieve deterministic execution of the teardown path.
+    //
+    // A pure black-box test would just call `TryAcquire()` followed immediately by `Dispose()`.
+    // Because the IPC server loop runs in a background Task, a black-box test introduces a
+    // race condition: `Dispose()` might execute before the background task is ever scheduled by the thread pool.
+    // If that happens, the background task starts, immediately sees `_disposed = true`, and exits.
+    //
+    // That black-box approach completely fails to test the most critical teardown path: gracefully
+    // shutting down an ACTIVELY listening server loop (cancelling the pipe, unwinding blocking calls).
+    //
+    // By hooking into the internals, we halt the main test thread until the background loop is
+    // provably up, running, and listening. Only then do we call `Dispose()`. This guarantees we are
+    // actually testing the complex active-teardown logic. Changing the loop cancellation away from
+    // a CTS is extremely unlikely, making the maintenance cost of this change detector acceptable.
     [Fact]
     public async Task Lifecycle_Deterministic_CreateStartDispose()
     {
@@ -83,7 +99,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         var isPrimary = (bool)backend.GetType().GetMethod("TryAcquirePrimary", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(backend, null)!;
         isPrimary.ShouldBeTrue();
 
-        var serverTask = backend.RunServerLoop(_ => ValueTask.CompletedTask, null, CancellationToken.None);
+        var serverTask = backend.RunServerLoop(_ => ValueTask.CompletedTask, null);
 
         // Run Dispose on another thread
         var disposeTask = Task.Run(primary.Dispose, TestContext.Current.CancellationToken);
@@ -144,6 +160,16 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         backend._pipeCts.ShouldBeNull();
     }
 
+    // Validates the atomic initialization of _pipeCts under _pipeCtsLock in the backend.
+    // While InstanceLock.TryAcquire() is thread-unsafe by design, InstanceLock.Dispose() is
+    // thread-safe. A concurrent Dispose() call during TryAcquire()'s startup phase must
+    // either cancel a fully initialized _pipeCts or safely no-op, without leaking an
+    // orphaned server loop.
+    //
+    // Because forcing a deterministic interleaving of TryAcquire() and Dispose() is highly
+    // prone to flakiness, this test instead hammers the backend's internal lock state
+    // machine via multithreaded concurrent invocation. Proving the internal mechanism
+    // cannot be corrupted implicitly guarantees resilience against the Dispose() teardown race.
     [Fact]
     public async Task Lifecycle_MultiThreadedDoubleStart_PreventsDoubleExecution()
     {
@@ -166,7 +192,7 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
                 await startTcs.Task;
                 try
                 {
-                    var t = backend.RunServerLoop(_ => ValueTask.CompletedTask, null, CancellationToken.None);
+                    var t = backend.RunServerLoop(_ => ValueTask.CompletedTask, null);
                     Interlocked.Increment(ref executingThreads);
                     await t;
                 }
@@ -235,6 +261,6 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
 
         Should.Throw<ObjectDisposedException>(() => primary.TryAcquireOrNotify(TestContext.Current.CancellationToken));
 
-        await Should.ThrowAsync<ObjectDisposedException>(async () => await primary._backend.RunServerLoop(_ => ValueTask.CompletedTask, null, CancellationToken.None));
+        await Should.ThrowAsync<ObjectDisposedException>(async () => await primary._backend.RunServerLoop(_ => ValueTask.CompletedTask, null));
     }
 }

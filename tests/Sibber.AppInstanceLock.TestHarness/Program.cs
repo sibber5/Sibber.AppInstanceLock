@@ -6,6 +6,7 @@
 
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json.Serialization;
 using Sibber.AppInstanceLock;
 
 #pragma warning disable CA1849
@@ -118,7 +119,8 @@ using var instanceLock = new InstanceLock<string>(
     onOtherInstanceOpened: onOtherInstance,
     onServerException: null,
     loggerFactory: null,
-    options: options
+    options: options,
+    messageJsonTypeInfo: TestJsonContext.Default.String
 );
 
 if (instanceLock.TryAcquireOrNotify())
@@ -128,7 +130,7 @@ if (instanceLock.TryAcquireOrNotify())
 
     if (runForever || listen)
     {
-        if (listen)
+        if (listen && !runForever)
         {
             msgReceivedEvent.Wait();
             // Allow time for the secondary process to observe completion before we exit
@@ -145,3 +147,6 @@ else
     Console.WriteLine("NOT_PRIMARY");
     Console.Out.Flush();
 }
+
+[JsonSerializable(typeof(string))]
+internal sealed partial class TestJsonContext : JsonSerializerContext { }

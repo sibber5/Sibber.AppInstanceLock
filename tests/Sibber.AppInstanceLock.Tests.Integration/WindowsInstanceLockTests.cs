@@ -31,10 +31,10 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         var appId = UniqueAppId();
         var options = new InstanceLockOptions { Scope = scope };
 
-        using var instanceLock = new WindowsInstanceLock<string>(appId, options, NullLogger<WindowsInstanceLock<string>>.Instance);
+        using var instanceLock = new WindowsInstanceLock<byte>(appId, options, NullLogger<WindowsInstanceLock<byte>>.Instance, null);
         instanceLock.TryAcquirePrimary().ShouldBeTrue("Failed to acquire primary instance lock");
 
-        var mutexName = WindowsInstanceLock<string>.CreateMutexName(appId, scope);
+        var mutexName = WindowsInstanceLock<byte>.CreateMutexName(appId, scope);
         var mutexOpened = Mutex.TryOpenExisting(mutexName, out var mutex);
         mutexOpened.ShouldBeTrue("The mutex should be accessible to the creator");
         mutex?.Dispose();
@@ -48,10 +48,10 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         var appId = UniqueAppId();
         var options = new InstanceLockOptions { Scope = scope };
 
-        using var instanceLock = new WindowsInstanceLock<string>(appId, options, NullLogger<WindowsInstanceLock<string>>.Instance);
+        using var instanceLock = new WindowsInstanceLock<byte>(appId, options, NullLogger<WindowsInstanceLock<byte>>.Instance, null);
         instanceLock.TryAcquirePrimary().ShouldBeTrue("Failed to acquire primary instance lock");
 
-        var mutexName = WindowsInstanceLock<string>.CreateMutexName(appId, scope);
+        var mutexName = WindowsInstanceLock<byte>.CreateMutexName(appId, scope);
         var mutexOpened = Mutex.TryOpenExisting(mutexName, out var mutex);
         mutexOpened.ShouldBeTrue();
 
@@ -94,10 +94,10 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         var appId = UniqueAppId();
         var options = new InstanceLockOptions { Scope = InstanceLockScope.Machine };
 
-        using var instanceLock = new WindowsInstanceLock<string>(appId, options, NullLogger<WindowsInstanceLock<string>>.Instance);
+        using var instanceLock = new WindowsInstanceLock<byte>(appId, options, NullLogger<WindowsInstanceLock<byte>>.Instance, null);
         instanceLock.TryAcquirePrimary().ShouldBeTrue("Failed to acquire primary instance lock");
 
-        var mutexName = WindowsInstanceLock<string>.CreateMutexName(appId, InstanceLockScope.Machine);
+        var mutexName = WindowsInstanceLock<byte>.CreateMutexName(appId, InstanceLockScope.Machine);
         var mutexOpened = Mutex.TryOpenExisting(mutexName, out var mutex);
         mutexOpened.ShouldBeTrue();
 
@@ -134,15 +134,15 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         }
     }
 
-    private static WindowsInstanceLock<string> StartPipeServer(string appId, InstanceLockScope scope)
+    private static WindowsInstanceLock<byte> StartPipeServer(string appId, InstanceLockScope scope)
     {
         var options = new InstanceLockOptions { Scope = scope };
-        var instanceLock = new WindowsInstanceLock<string>(appId, options, NullLogger<WindowsInstanceLock<string>>.Instance);
+        var instanceLock = new WindowsInstanceLock<byte>(appId, options, NullLogger<WindowsInstanceLock<byte>>.Instance, null);
         instanceLock.TryAcquirePrimary().ShouldBeTrue("Failed to acquire primary instance lock");
 
         using var serverReady = new ManualResetEventSlim(false);
         instanceLock.OnServerReady = () => serverReady.Set();
-        _ = instanceLock.RunServerLoop(_ => ValueTask.CompletedTask, null, TestContext.Current.CancellationToken);
+        _ = instanceLock.RunServerLoop(_ => ValueTask.CompletedTask, null);
         serverReady.Wait(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken).ShouldBeTrue("Pipe server did not start in time");
         return instanceLock;
     }
@@ -155,7 +155,7 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         var appId = UniqueAppId();
         using var instanceLock = StartPipeServer(appId, scope);
 
-        var pipeName = WindowsInstanceLock<string>.CreatePipeName(appId, scope);
+        var pipeName = WindowsInstanceLock<byte>.CreatePipeName(appId, scope);
         using var clientPipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous);
         await clientPipe.ConnectAsync(2000, TestContext.Current.CancellationToken);
         clientPipe.IsConnected.ShouldBeTrue("The Named Pipe should allow the current user to connect");
@@ -169,7 +169,7 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         var appId = UniqueAppId();
         using var instanceLock = StartPipeServer(appId, scope);
 
-        var pipeName = WindowsInstanceLock<string>.CreatePipeName(appId, scope);
+        var pipeName = WindowsInstanceLock<byte>.CreatePipeName(appId, scope);
 
         using var clientPipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous);
         await clientPipe.ConnectAsync(2000, TestContext.Current.CancellationToken);
@@ -209,7 +209,7 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         var appId = UniqueAppId();
         using var instanceLock = StartPipeServer(appId, InstanceLockScope.Machine);
 
-        var pipeName = WindowsInstanceLock<string>.CreatePipeName(appId, InstanceLockScope.Machine);
+        var pipeName = WindowsInstanceLock<byte>.CreatePipeName(appId, InstanceLockScope.Machine);
 
         using var clientPipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous);
         await clientPipe.ConnectAsync(2000, TestContext.Current.CancellationToken);
@@ -250,9 +250,9 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         var invalidScope = (InstanceLockScope)999;
         var options = new InstanceLockOptions { Scope = invalidScope };
 
-        Should.Throw<NotSupportedException>(() => new WindowsInstanceLock<string>("test", options, null));
-        Should.Throw<NotSupportedException>(() => WindowsInstanceLock<string>.CreatePipeName("test", invalidScope));
-        Should.Throw<NotSupportedException>(() => WindowsInstanceLock<string>.CreateMutexName("test", invalidScope));
+        Should.Throw<NotSupportedException>(() => new WindowsInstanceLock<byte>("test", options, null, null));
+        Should.Throw<NotSupportedException>(() => WindowsInstanceLock<byte>.CreatePipeName("test", invalidScope));
+        Should.Throw<NotSupportedException>(() => WindowsInstanceLock<byte>.CreateMutexName("test", invalidScope));
     }
 
     [WindowsFact]
@@ -262,7 +262,7 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         var scope = InstanceLockScope.User;
 
         using var primaryLock = StartPipeServer(appId, scope);
-        var pipeName = WindowsInstanceLock<string>.CreatePipeName(appId, scope);
+        var pipeName = WindowsInstanceLock<byte>.CreatePipeName(appId, scope);
 
         Should.Throw<Exception>(() =>
         {
@@ -283,13 +283,13 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
     public void Mutex_TryAcquirePrimary_FallsBackToOpenExisting_WhenCreateFails()
     {
         var appId = UniqueAppId();
-        var mutexName = WindowsInstanceLock<string>.CreateMutexName(appId, InstanceLockScope.User);
+        var mutexName = WindowsInstanceLock<byte>.CreateMutexName(appId, InstanceLockScope.User);
 
         using var existingMutex = new Mutex(true, mutexName, out var createdNew);
         createdNew.ShouldBeTrue();
 
         var options = new InstanceLockOptions { Scope = InstanceLockScope.User };
-        using var instanceLock = new WindowsInstanceLock<string>(appId, options, null);
+        using var instanceLock = new WindowsInstanceLock<byte>(appId, options, null, null);
 
         instanceLock.TryAcquirePrimary().ShouldBeFalse("TryAcquirePrimary should return false because existingMutex already owns the mutex");
     }
@@ -298,14 +298,14 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
     public void Mutex_TryAcquirePrimary_HandlesAbandonedMutexException()
     {
         var appId = UniqueAppId();
-        var mutexName = WindowsInstanceLock<string>.CreateMutexName(appId, InstanceLockScope.User);
+        var mutexName = WindowsInstanceLock<byte>.CreateMutexName(appId, InstanceLockScope.User);
 
         var thread = new Thread(() => _ = new Mutex(true, mutexName, out _));
         thread.Start();
         thread.Join();
 
         var options = new InstanceLockOptions { Scope = InstanceLockScope.User };
-        using var instanceLock = new WindowsInstanceLock<string>(appId, options, null);
+        using var instanceLock = new WindowsInstanceLock<byte>(appId, options, null, null);
 
         instanceLock.TryAcquirePrimary().ShouldBeTrue("TryAcquirePrimary should catch AbandonedMutexException and acquire ownership");
     }
@@ -324,7 +324,7 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         using var mutex = MutexAcl.Create(true, mutexName, out var createdNew, security);
         createdNew.ShouldBeTrue();
 
-        using var instanceLock = new WindowsInstanceLock<string>(appId, options, null);
+        using var instanceLock = new WindowsInstanceLock<byte>(appId, options, null, null);
         Should.Throw<UnauthorizedAccessException>(() => instanceLock.TryAcquirePrimary());
     }
 
@@ -366,7 +366,7 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         t.Join();
 
         // Main Thread: Simulate a new instance starting up
-        using var instanceLock = new WindowsInstanceLock<string>(appId, options, null);
+        using var instanceLock = new WindowsInstanceLock<byte>(appId, options, null, null);
         var isPrimary = instanceLock.TryAcquirePrimary();
         isPrimary.ShouldBeTrue("InstanceLock should acquire an abandoned mutex even if the object is kept alive by another handle");
     }

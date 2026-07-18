@@ -20,11 +20,6 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         await task.WaitAsync(timeout, TestContext.Current.CancellationToken);
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: IPC Message Framing ─ Complex Type (JSON length-prefixed)
-    // "Secondary instances transmit data using a 4-byte LE length + UTF-8 JSON payload."
-    // ──────────────────────────────────────────────────────────────────────
-
     [Fact]
     public async Task IpcRoundTrip_StringMessage_ReceivedByPrimary()
     {
@@ -86,11 +81,6 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         received.ShouldBeNull();
     }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: IPC Message Framing ─ Single-byte type (raw byte)
-    // "For 1-byte value types: Raw 1-byte transmission."
-    // ──────────────────────────────────────────────────────────────────────
 
     [Fact]
     public async Task IpcRoundTrip_ByteMessage_ReceivedByPrimary()
@@ -156,10 +146,6 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         received.ShouldBeTrue();
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: Multiple IPC messages across multiple secondaries
-    // ──────────────────────────────────────────────────────────────────────
-
     [Fact]
     public async Task IpcRoundTrip_MultipleSecondaries_AllMessagesReceived()
     {
@@ -216,11 +202,6 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         }
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: Notification Handshake Resilience
-    // "Secondary instances block and retry sending their message."
-    // ──────────────────────────────────────────────────────────────────────
-
     [Fact]
     public async Task NotificationRetry_SecondaryRetriesUntilPrimaryAccepts()
     {
@@ -271,11 +252,6 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         await secondaryTask.WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: Server Loop Resilience ─ onMessage exceptions are swallowed
-    // "Handler exceptions (onMessage) are caught, logged, and ignored."
-    // ──────────────────────────────────────────────────────────────────────
-
     [Fact]
     public async Task ServerLoop_OnMessageThrows_ServerContinuesAcceptingMessages()
     {
@@ -320,10 +296,50 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         callCount.ShouldBeGreaterThanOrEqualTo(2);
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: Server Loop Resilience ─ onServerException controls retry
-    // "If onServerException returns false, the server will terminate."
-    // ──────────────────────────────────────────────────────────────────────
+    [Fact]
+    public async Task ServerLoop_OversizedLengthHeader_RejectedSafelyAndRecovers()
+    {
+        var appId = UniqueAppId();
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var primary = CreateLock(
+            appId,
+            createMsg: () => "valid",
+            onOtherInstance: msg =>
+            {
+                tcs.TrySetResult(msg);
+                return ValueTask.CompletedTask;
+            }
+        );
+
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
+
+        var pipeName = primary._backend._pipeName;
+
+        // 1. Malicious client connects and sends a length header > 1MiB.
+        await using (var maliciousClient = new NamedPipeClientStream(".", pipeName, PipeDirection.Out))
+        {
+            await maliciousClient.ConnectAsync(3000, TestContext.Current.CancellationToken);
+
+            var lenBuf = new byte[4];
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(lenBuf, (1024 * 1024) + 1); // 1 MiB + 1
+            await maliciousClient.WriteAsync(lenBuf, TestContext.Current.CancellationToken);
+            await maliciousClient.FlushAsync(TestContext.Current.CancellationToken);
+        }
+
+        // 2. The primary server should have cleanly caught the InvalidDataException, broken out, and rebuilt the pipe.
+        // A legitimate secondary should now be able to connect and successfully notify the primary.
+        var secondary = CreateLock(
+            appId,
+            createMsg: () => "legitimate",
+            onOtherInstance: _ => ValueTask.CompletedTask
+        );
+
+        secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        received.ShouldBe("legitimate");
+    }
 
     [Fact]
     public async Task ServerLoop_SingleByteTimeout_BrutalDisposeRecovers()
@@ -394,24 +410,13 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             options: options
         );
 
-        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
+        primary._backend.OnServerReady = () => throw new FormatException("Injected exception");
 
-        // Trigger a server-side exception by connecting and sending a malformed length header
-        // that indicates a message larger than 1 MiB, causing InvalidOperationException.
-        var pipeName = primary._backend._pipeName;
-        await using (var maliciousClient = new NamedPipeClientStream(".", pipeName, PipeDirection.Out))
-        {
-            await maliciousClient.ConnectAsync(5000, TestContext.Current.CancellationToken);
-            // write a 4-byte LE int with value > 1 MiB to trigger the size guard
-            var buf = new byte[4];
-            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(buf, 2 * 1024 * 1024);
-            await maliciousClient.WriteAsync(buf, TestContext.Current.CancellationToken);
-            await maliciousClient.FlushAsync(TestContext.Current.CancellationToken);
-        }
+        primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         // onServerException should have been called
         var ex2 = await exceptionSeen.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
-        ex2.ShouldBeOfType<InvalidOperationException>();
+        ex2.ShouldBeOfType<FormatException>();
 
         // The server loop should have completed (no fault on the returned task).
         await AwaitServerLoopAsync(primary, TimeSpan.FromSeconds(5));
@@ -419,11 +424,6 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         var serverTask = primary._pipeServerLoopTask;
         serverTask?.Status.ShouldBe(TaskStatus.RanToCompletion);
     }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: Notification with no IPC configured is a no-op
-    // "If createMsgToPrimary and onOtherInstanceOpened are null, no IPC occurs."
-    // ──────────────────────────────────────────────────────────────────────
 
     [Fact]
     public void TryAcquireOrNotify_WithoutIpcCallbacks_SecondaryDoesNotThrow()
@@ -437,17 +437,6 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         secondary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeFalse();
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: Named Pipe Server Cardinality
-    // "maxNumberOfServerInstances: 1 ─ prevents multiple listeners."
-    //
-    // We verify this indirectly: if the primary is listening, a second
-    // InstanceLock that also acquired the lock (impossible with real OS
-    // primitives, but tested via sequential acquire/release) would fail to
-    // create a second pipe server. This is implicitly validated by the
-    // concurrent race test ─ only one primary ever exists.
-    // ──────────────────────────────────────────────────────────────────────
-
     [Fact]
     public void PipeServer_OnlyStartedWhenIpcCallbacksProvided()
     {
@@ -457,13 +446,14 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         var primary = CreateLock<string>(appId);
         primary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
 
-        var serverTask = primary._pipeServerLoopTask;
+        var pipeName = primary._backend._pipeName;
+        using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.None);
 
-        serverTask.ShouldBeNull();
+        Should.Throw<TimeoutException>(() => client.Connect(100));
     }
 
     [Fact]
-    public void PipeServer_StartedWhenIpcCallbacksProvided()
+    public async Task PipeServer_StartedWhenIpcCallbacksProvided()
     {
         var appId = UniqueAppId();
 
@@ -475,16 +465,13 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
 
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
-        var serverTask = primary._pipeServerLoopTask;
+        var pipeName = primary._backend._pipeName;
 
-        serverTask.ShouldNotBeNull();
-        serverTask.IsCompleted.ShouldBeFalse();
+        await using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.None);
+        await client.ConnectAsync(2000, TestContext.Current.CancellationToken);
+
+        client.IsConnected.ShouldBeTrue();
     }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: Atomic Teardown ─ Dispose cancels the pipe CTS
-    // "Invoking Dispose() must cancel the underlying _pipeCts."
-    // ──────────────────────────────────────────────────────────────────────
 
     [Fact]
     public async Task Dispose_WhileServerWaiting_ServerLoopCompletesGracefully()

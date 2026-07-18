@@ -11,7 +11,7 @@ namespace Sibber.AppInstanceLock.Tests.Unit;
 
 public sealed class ServerRetryPolicyTests : UnitTestBase
 {
-    private sealed class MockBackendLock(InstanceLockOptions options) : InstanceLockImpl<string>("mock_pipe", options, null)
+    private sealed class MockBackendLock(InstanceLockOptions options) : InstanceLockImpl<byte>("mock_pipe", options, null, null)
     {
         public int ThrowCount;
 
@@ -74,8 +74,7 @@ public sealed class ServerRetryPolicyTests : UnitTestBase
 
         var serverTask = backend.RunServerLoop(
             onMessage: _ => ValueTask.CompletedTask,
-            onException: null,
-            ct: TestContext.Current.CancellationToken
+            onException: null
         );
 
         await serverTask;
@@ -102,8 +101,7 @@ public sealed class ServerRetryPolicyTests : UnitTestBase
 
         await backend.RunServerLoop(
             onMessage: _ => ValueTask.CompletedTask,
-            onException: _ => false,
-            ct: TestContext.Current.CancellationToken
+            onException: _ => false
         );
 
         backend.ThrowCount.ShouldBe(1);

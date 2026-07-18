@@ -4,43 +4,41 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+using Sibber.AppInstanceLock.Tests.Shared;
+
 namespace Sibber.AppInstanceLock.Tests.Unit;
 
 public sealed class ConstructorValidationTests : UnitTestBase
 {
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: Constructor argument validation
-    // ──────────────────────────────────────────────────────────────────────
+    [Fact]
+    public void Constructor_NullAppId_Throws() => Should.Throw<ArgumentNullException>(() => new InstanceLock<byte>(null!));
 
     [Fact]
-    public void Constructor_NullAppId_Throws() => Should.Throw<ArgumentNullException>(() => new InstanceLock<string>(null!));
-
-    [Fact]
-    public void Constructor_EmptyAppId_Throws() => Should.Throw<ArgumentException>(() => new InstanceLock<string>(""));
+    public void Constructor_EmptyAppId_Throws() => Should.Throw<ArgumentException>(() => new InstanceLock<byte>(""));
 
     [Fact]
     public void Constructor_InvalidCharsInAppId_Throws()
     {
-        Should.Throw<ArgumentException>(() => new InstanceLock<string>("my.app"));
-        Should.Throw<ArgumentException>(() => new InstanceLock<string>("my app"));
-        Should.Throw<ArgumentException>(() => new InstanceLock<string>("app/id"));
+        Should.Throw<ArgumentException>(() => new InstanceLock<byte>("my.app"));
+        Should.Throw<ArgumentException>(() => new InstanceLock<byte>("my app"));
+        Should.Throw<ArgumentException>(() => new InstanceLock<byte>("app/id"));
     }
 
     [Fact]
     public void Constructor_AppIdTooLong_Throws()
     {
         var tooLong = new string('a', 256);
-        Should.Throw<ArgumentOutOfRangeException>(() => new InstanceLock<string>(tooLong));
+        Should.Throw<ArgumentOutOfRangeException>(() => new InstanceLock<byte>(tooLong));
     }
 
     [Fact]
     public void Constructor_OnlyOneMsgCallbackProvided_Throws()
     {
         // createMsg without onOtherInstance
-        Should.Throw<ArgumentNullException>(() => new InstanceLock<string>("valid-id", createMsgToPrimary: () => "x"));
+        Should.Throw<ArgumentNullException>(() => new InstanceLock<byte>("valid-id", createMsgToPrimary: () => 1));
 
         // onOtherInstance without createMsg
-        Should.Throw<ArgumentNullException>(() => new InstanceLock<string>("valid-id", onOtherInstanceOpened: _ => ValueTask.CompletedTask));
+        Should.Throw<ArgumentNullException>(() => new InstanceLock<byte>("valid-id", onOtherInstanceOpened: _ => ValueTask.CompletedTask));
     }
 
     [InlineData(-1, 10, 10)]
@@ -81,18 +79,17 @@ public sealed class ConstructorValidationTests : UnitTestBase
         );
     }
 
-    [Fact]
-    public void BackendLock_InvalidScope_Throws()
+    [WindowsFact]
+    public void WindowsBackendLock_InvalidScope_Throws()
     {
         var options = new InstanceLockOptions { Scope = (InstanceLockScope)99 };
+        Should.Throw<NotSupportedException>(() => new InstanceLock<byte>("test-id", options: options));
+    }
 
-        if (OperatingSystem.IsWindows())
-        {
-            Should.Throw<NotSupportedException>(() => new WindowsInstanceLock<string>("test-id", options, null));
-        }
-        else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
-        {
-            Should.Throw<NotSupportedException>(() => new UnixInstanceLock<string>("test-id", options, null));
-        }
+    [UnixFact]
+    public void UnixBackendLock_InvalidScope_Throws()
+    {
+        var options = new InstanceLockOptions { Scope = (InstanceLockScope)99 };
+        Should.Throw<NotSupportedException>(() => new InstanceLock<byte>("test-id", options: options));
     }
 }

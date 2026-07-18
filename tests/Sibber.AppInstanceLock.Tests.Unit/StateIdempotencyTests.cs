@@ -43,10 +43,6 @@ public sealed class StateIdempotencyTests : UnitTestBase
         Should.Throw<ObjectDisposedException>(() => primary.TryAcquire(TestContext.Current.CancellationToken));
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: CancellationToken respected by TryAcquire
-    // ──────────────────────────────────────────────────────────────────────
-
     [Fact]
     public void TryAcquire_CancelledToken_ThrowsOperationCanceled()
     {

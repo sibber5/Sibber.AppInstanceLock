@@ -16,15 +16,16 @@ public sealed class ExceptionMappingTests : UnitTestBase
     public void Windows_ExceptionMapping_AccessDenied()
     {
         var appId = UniqueAppId();
-        var mutexName = @$"Local\{appId}";
+        var options = new InstanceLockOptions { Scope = InstanceLockScope.Session };
+        var mutexName = WindowsInstanceLock<byte>.CreateMutexName(appId, options.Scope);
+
         var security = new MutexSecurity();
         using var wid = WindowsIdentity.GetCurrent();
         var rule = new MutexAccessRule(wid.User!, MutexRights.FullControl, AccessControlType.Deny);
         security.AddAccessRule(rule);
 
         using var m = MutexAcl.Create(false, mutexName, out var _, security);
-        var options = new InstanceLockOptions { Scope = InstanceLockScope.Session };
-        using var inst = new WindowsInstanceLock<string>(appId, options, null);
+        using var inst = new WindowsInstanceLock<byte>(appId, options, null, null);
         Should.Throw<UnauthorizedAccessException>(() => inst.TryAcquirePrimary());
     }
 
@@ -39,7 +40,7 @@ public sealed class ExceptionMappingTests : UnitTestBase
 
         var appId = UniqueAppId();
         var options = new InstanceLockOptions { Scope = InstanceLockScope.User };
-        using var inst = new UnixInstanceLock<string>(appId, options, null);
+        using var inst = new UnixInstanceLock<byte>(appId, options, null, null);
         var tempPath = inst._lockFilePath;
 
         var parentDir = Path.GetDirectoryName(tempPath);

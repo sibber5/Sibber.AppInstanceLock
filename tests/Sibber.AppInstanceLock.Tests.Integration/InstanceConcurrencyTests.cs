@@ -8,12 +8,6 @@ namespace Sibber.AppInstanceLock.Tests.Integration;
 
 public sealed class InstanceConcurrencyTests : IntegrationTestBase
 {
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: Single Instance Exclusivity
-    // "Only one entity can successfully return true from TryAcquirePrimary()
-    //  for a given App ID and InstanceLockScope."
-    // ──────────────────────────────────────────────────────────────────────
-
     [Fact]
     public void TryAcquire_FirstInstance_ReturnsTrueAsPrimary()
     {
@@ -51,11 +45,6 @@ public sealed class InstanceConcurrencyTests : IntegrationTestBase
 
         newPrimary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
     }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // INVARIANT: Concurrent Startup Race Condition
-    // "Exactly one thread returns true (Primary) and the other returns false (Secondary)."
-    // ──────────────────────────────────────────────────────────────────────
 
     [Fact]
     public async Task ConcurrentStartup_ExactlyOnePrimary()

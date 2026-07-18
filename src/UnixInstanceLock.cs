@@ -11,6 +11,7 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
 using static Sibber.AppInstanceLock.PInvoke;
 
@@ -34,8 +35,8 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     /// <exception cref="SecurityException"></exception>
     /// <exception cref="InvalidOperationException"></exception>
     /// <exception cref="PlatformNotSupportedException">Getting the folder path of the user profile special folder is not supported on the current platform.</exception>
-    public UnixInstanceLock(string appId, InstanceLockOptions options, ILogger<UnixInstanceLock<TMessage>>? logger)
-        : base(CreatePipeName(appId, options.Scope), options, logger)
+    public UnixInstanceLock(string appId, InstanceLockOptions options, ILogger<UnixInstanceLock<TMessage>>? logger, JsonTypeInfo<TMessage>? jsonTypeInfo)
+        : base(CreatePipeName(appId, options.Scope), options, logger, jsonTypeInfo)
     {
         _lockFilePath = ChooseLockFilePath(appId, _options.Scope, logger);
         _logger?.LogDebug(nameof(UnixInstanceLock<>) + " initialized: lockFile={Lock} pipe={Pipe}", _lockFilePath, _pipeName);
@@ -89,12 +90,15 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
             {
                 try
                 {
-                    Directory.CreateDirectory(xdg);
+                    // "If, when attempting to write a file, the destination directory is non-existent an attempt should be made to create it with permission 0700.
+                    // If the destination directory exists already the permissions should not be changed."
+                    // - https://specifications.freedesktop.org/basedir/latest/
+                    if (!Directory.Exists(xdg)) Directory.CreateDirectory(xdg, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
                     return Path.Combine(xdg, $"{appId}.lock");
                 }
                 catch (Exception ex)
                 {
-                    logger?.LogDebug(ex, "Failed to create lock directory at XDG_RUNTIME_DIR '{Path}'. Falling back...", xdg);
+                    logger?.LogDebug(ex, "Failed to create or access XDG_RUNTIME_DIR at '{Path}'. Falling back...", xdg);
                 }
             }
 
@@ -217,13 +221,50 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
             var fsOptions = new FileStreamOptions
             {
-                Mode = FileMode.OpenOrCreate,
+                Mode = FileMode.Open,
                 Access = FileAccess.ReadWrite,
                 Share = FileShare.ReadWrite,
-                UnixCreateMode = unixCreateMode,
             };
-            var fs = new FileStream(_lockFilePath, fsOptions);
+
+            FileStream fs;
+            try
+            {
+                // fast path. we don't delete lock files, so after the first launch, the file will most probably exist.
+                // this avoids the fs.protected_regular issue with OpenOrCreate (explained below), which is why we do that as a fallback.
+                fs = new FileStream(_lockFilePath, fsOptions);
+            }
+            catch (FileNotFoundException)
+            {
+                fsOptions.Mode = FileMode.OpenOrCreate;
+                fsOptions.UnixCreateMode = unixCreateMode;
+
+                try
+                {
+                    fs = new FileStream(_lockFilePath, fsOptions);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    fsOptions.Mode = FileMode.Open;
+                    fsOptions.UnixCreateMode = null;
+
+                    // On Linux, sticky directories (like /tmp or /var/lock) with fs.protected_regular=1/2
+                    // reject O_CREAT | O_RDWR by a user who is not the file owner, even if the file is 0666.
+                    // We retry with FileMode.Open (no O_CREAT).
+                    fs = new FileStream(_lockFilePath, fsOptions);
+                }
+            }
+
             _lockFileStream = fs;
+
+            try
+            {
+                File.SetUnixFileMode(fs.SafeFileHandle, unixCreateMode);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // We might not be the owner if another user created the machine-scoped lock file.
+                // We successfully opened it for ReadWrite, so we can proceed.
+            }
 
             // get native file descriptor and attempt flock non-blocking exclusive
             int res;

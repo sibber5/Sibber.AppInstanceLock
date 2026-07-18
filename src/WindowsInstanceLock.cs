@@ -8,9 +8,11 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Pipes;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
 
 namespace Sibber.AppInstanceLock;
@@ -31,13 +33,13 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     private Mutex? _mutex;
     private bool _ownsMutex;
     private Thread? _mutexThread;
-    private ManualResetEventSlim? _disposeEvent;
+    private readonly ManualResetEventSlim _disposeEvent = new(false);
 
     /// <exception cref="NotSupportedException"><see cref="InstanceLockOptions.Scope"/> is not a supported scope.</exception>
     /// <exception cref="InvalidOperationException">The current user's <see cref="SecurityIdentifier"/> could not be retrieved.</exception>
     /// <exception cref="System.Security.SecurityException">The caller does not have the required permissions to retrieve the current user identity.</exception>
-    public WindowsInstanceLock(string appId, InstanceLockOptions options, ILogger<WindowsInstanceLock<TMessage>>? logger)
-        : base(CreatePipeName(appId, options.Scope), options, logger)
+    public WindowsInstanceLock(string appId, InstanceLockOptions options, ILogger<WindowsInstanceLock<TMessage>>? logger, JsonTypeInfo<TMessage>? jsonTypeInfo)
+        : base(CreatePipeName(appId, options.Scope), options, logger, jsonTypeInfo)
     {
         _mutexName = CreateMutexName(appId, _options.Scope);
         _logger?.LogDebug(nameof(WindowsInstanceLock<>) + " initialized: mutex={Mutex} pipe={Pipe}", _mutexName, _pipeName);
@@ -48,7 +50,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     internal static string CreatePipeName(string appId, InstanceLockScope scope) => scope switch
     { // Named pipe names on Windows are relative, e.g. \\.\pipe\<name>. Keep them simple.
         InstanceLockScope.Machine => $"si_{appId}",
-        InstanceLockScope.User => $"si_{appId}_user_{GetUserId()}",
+        InstanceLockScope.User => $"si_{appId}_user_{HashIfTooLong(GetUserId())}",
         InstanceLockScope.Session => $"si_{appId}_session_{GetSessionId()}",
         // _ => $"si_{baseName}",
         _ => throw new NotSupportedException($"{scope} is not a supported scope."),
@@ -59,10 +61,21 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     internal static string CreateMutexName(string appId, InstanceLockScope scope) => scope switch
     {
         InstanceLockScope.Machine => @$"Global\{appId}",
-        InstanceLockScope.User => @$"Global\{appId}_user_{GetUserId()}",
+        InstanceLockScope.User => @$"Global\{appId}_user_{HashIfTooLong(GetUserId())}",
         InstanceLockScope.Session => @$"Local\{appId}",
         _ => throw new NotSupportedException($"{scope} is not a supported scope."),
     };
+
+    // ExceptionAdjustment: M:System.Runtime.InteropServices.MemoryMarshal.AsBytes``1(System.ReadOnlySpan{``0}) -T:System.OverflowException
+    private static string HashIfTooLong(string sid)
+    {
+        if (sid.Length <= 64) return sid;
+
+        var sidBytes = MemoryMarshal.AsBytes(sid.AsSpan());
+        Span<byte> hash = stackalloc byte[32]; // SHA256 is 32 bytes
+        System.Security.Cryptography.SHA256.HashData(sidBytes, hash);
+        return Convert.ToHexStringLower(hash);
+    }
 
     /// <exception cref="IdentityNotMappedException">A <see cref="SecurityIdentifier"/> could not be mapped to a valid account.</exception>
     /// <exception cref="InvalidOperationException">The current user's <see cref="SecurityIdentifier"/> could not be retrieved.</exception>
@@ -105,68 +118,95 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
         var t = new Thread(() =>
         {
+            var attemptCompleteSignaled = false;
             try
             {
-                _mutex = MutexAcl.Create(initiallyOwned: false, _mutexName, out _, CreateMutexSecurity());
+                try
+                {
+                    _mutex = MutexAcl.Create(initiallyOwned: false, _mutexName, out _, CreateMutexSecurity());
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogDebug(ex, "Mutex creation failed; attempting OpenExisting.");
+                    try
+                    {
+                        _mutex = Mutex.OpenExisting(_mutexName);
+                    }
+                    catch (UnauthorizedAccessException openUae)
+                    {
+                        _logger?.LogError(openUae, "UnauthorizedAccessException when opening mutex {Mutex}.", _mutexName);
+                        threadExceptionInfo = ExceptionDispatchInfo.Capture(openUae);
+                        return;
+                    }
+                    catch (Exception openEx)
+                    {
+                        _logger?.LogWarning(openEx, "OpenExisting failed; treating as non-primary.");
+                        return;
+                    }
+                }
+
+                try
+                {
+                    _ownsMutex = _mutex.WaitOne(0);
+                }
+                catch (AbandonedMutexException)
+                {
+                    _ownsMutex = true;
+                }
+
+                if (_ownsMutex)
+                {
+                    success = true;
+
+                    attemptCompleteSignaled = true;
+                    attemptComplete.Set();
+
+                    try
+                    {
+                        _disposeEvent.Wait();
+                    }
+                    catch (ObjectDisposedException) { }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(ex, "Mutex dispose event Wait() unexpectedly threw and exception. Releasing mutex...");
+                    }
+
+                    try
+                    {
+                        _mutex.ReleaseMutex();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogError(ex, "Mutex release failed.");
+                    }
+
+                    try
+                    {
+                        _mutex.Dispose();
+                    }
+                    catch { }
+                }
+                else
+                {
+                    try
+                    {
+                        _mutex.Dispose();
+                    }
+                    catch { }
+
+                    _mutex = null;
+                }
             }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "Mutex creation failed; attempting OpenExisting.");
-                try
-                {
-                    _mutex = Mutex.OpenExisting(_mutexName);
-                }
-                catch (UnauthorizedAccessException openUae)
-                {
-                    _logger?.LogError(openUae, "UnauthorizedAccessException when opening mutex {Mutex}.", _mutexName);
-                    threadExceptionInfo = ExceptionDispatchInfo.Capture(openUae);
-                    attemptComplete.Set();
-                    return;
-                }
-                catch (Exception openEx)
-                {
-                    _logger?.LogWarning(openEx, "OpenExisting failed; treating as non-primary.");
-                    attemptComplete.Set();
-                    return;
-                }
+                threadExceptionInfo = ExceptionDispatchInfo.Capture(ex);
             }
-
-            try
+            finally
             {
-                _ownsMutex = _mutex.WaitOne(0);
-            }
-            catch (AbandonedMutexException)
-            {
-                _ownsMutex = true;
-            }
-
-            if (_ownsMutex)
-            {
-                success = true;
-                _disposeEvent = new ManualResetEventSlim(false);
-                attemptComplete.Set();
-
-                try
+                if (!attemptCompleteSignaled)
                 {
-                    _disposeEvent.Wait();
+                    try { attemptComplete.Set(); } catch (ObjectDisposedException) { }
                 }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning(ex, "Mutex dispose event Wait() unexpectedly threw and exception. Releasing mutex...");
-                }
-
-                try
-                {
-                    _mutex.ReleaseMutex();
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogError(ex, "Mutex release failed.");
-                }
-            }
-            else
-            {
-                attemptComplete.Set();
             }
         })
         {
@@ -235,14 +275,9 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 
     protected override void DisposeCore()
     {
-        if (_disposeEvent is not null)
-        {
-            _disposeEvent.Set();
-            try { _mutexThread?.Join(); } catch { }
-            _disposeEvent.Dispose();
-        }
-
-        _mutex?.Dispose();
+        _disposeEvent.Set();
+        try { _mutexThread?.Join(); } catch { }
+        _disposeEvent.Dispose();
     }
 
     /// <exception cref="InvalidOperationException">The <see cref="SecurityIdentifier"/> for the current user was <see langword="null"/>.</exception>

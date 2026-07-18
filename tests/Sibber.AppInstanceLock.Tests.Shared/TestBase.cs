@@ -4,13 +4,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.Versioning;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
 using Meziantou.Extensions.Logging.Xunit.v3;
-using System.Diagnostics.CodeAnalysis;
 
 [assembly: SuppressMessage("Naming", "CA1716:Identifiers should not match keywords", Scope = "namespace", Target = "~N:Sibber.AppInstanceLock.Tests.Shared")]
 namespace Sibber.AppInstanceLock.Tests.Shared;
+
+[JsonSerializable(typeof(string))]
+internal sealed partial class TestJsonContext : JsonSerializerContext { }
 
 #pragma warning disable CA1063 // Implement IDisposable Correctly
 #pragma warning disable CA1816 // Dispose methods should call SuppressFinalize
@@ -46,12 +51,18 @@ public abstract class TestBase : IDisposable, IAsyncDisposable
         InstanceLockOptions? options = null
     )
     {
+        JsonTypeInfo<TMessage>? typeInfo = null;
+        if (typeof(TMessage) == typeof(string))
+        {
+            typeInfo = (JsonTypeInfo<TMessage>)(object)TestJsonContext.Default.String;
+        }
+
         var loggerFactory = LoggerFactory.Create(b =>
         {
             b.AddXunit();
             b.SetMinimumLevel(LogLevel.Debug);
         });
-        var l = new InstanceLock<TMessage>(appId, createMsg, onOtherInstance, onServerException, options: options, loggerFactory: loggerFactory);
+        var l = new InstanceLock<TMessage>(appId, createMsg, onOtherInstance, onServerException, options: options, loggerFactory: loggerFactory, messageJsonTypeInfo: typeInfo);
         _disposables.Add(l);
         _disposables.Add(loggerFactory);
         _serverLoopGetters.Add(() => l._pipeServerLoopTask);
