@@ -39,14 +39,16 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             {
                 tcs.TrySetResult(msg);
                 return ValueTask.CompletedTask;
-            });
+            }
+        );
 
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         var secondary = CreateLock(
             appId,
             createMsg: () => expected,
-            onOtherInstance: _ => ValueTask.CompletedTask);
+            onOtherInstance: _ => ValueTask.CompletedTask
+        );
 
         secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
 
@@ -67,7 +69,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             {
                 tcs.TrySetResult(msg);
                 return ValueTask.CompletedTask;
-            });
+            }
+        );
 
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
@@ -103,14 +106,16 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             {
                 tcs.TrySetResult(msg);
                 return ValueTask.CompletedTask;
-            });
+            }
+        );
 
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         var secondary = new InstanceLock<byte>(
             appId,
             createMsgToPrimary: () => expected,
-            onOtherInstanceOpened: _ => ValueTask.CompletedTask);
+            onOtherInstanceOpened: _ => ValueTask.CompletedTask
+        );
         _disposables.Add(secondary);
 
         secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
@@ -132,7 +137,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             {
                 tcs.TrySetResult(msg);
                 return ValueTask.CompletedTask;
-            });
+            }
+        );
         _disposables.Add(primary);
 
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
@@ -140,7 +146,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         var secondary = new InstanceLock<bool>(
             appId,
             createMsgToPrimary: () => true,
-            onOtherInstanceOpened: _ => ValueTask.CompletedTask);
+            onOtherInstanceOpened: _ => ValueTask.CompletedTask
+        );
         _disposables.Add(secondary);
 
         secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
@@ -180,7 +187,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
                     if (received.Count == Count) allReceived.TrySetResult();
                 }
                 return ValueTask.CompletedTask;
-            });
+            }
+        );
 
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
@@ -190,7 +198,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             var secondary = CreateLock(
                 appId,
                 createMsg: () => $"msg-{idx}",
-                onOtherInstance: _ => ValueTask.CompletedTask);
+                onOtherInstance: _ => ValueTask.CompletedTask
+            );
             secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeFalse();
             secondary.Dispose();
 
@@ -224,7 +233,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
             NotificationRetryPolicy = new NotificationRetryPolicy(
                 RetryAttempts: 20,
                 MaxJitterDelay: TimeSpan.FromMilliseconds(150),
-                ConnectionTimeout: TimeSpan.FromMilliseconds(500)),
+                ConnectionTimeout: TimeSpan.FromMilliseconds(500)
+            ),
         };
 
         var primary = CreateLock(
@@ -235,7 +245,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
                 tcs.TrySetResult(msg);
                 return ValueTask.CompletedTask;
             },
-            options: options);
+            options: options
+        );
 
         // Primary acquires lock and starts server.
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
@@ -249,7 +260,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
                 appId,
                 createMsg: () => "retry-delivery",
                 onOtherInstance: _ => ValueTask.CompletedTask,
-                options: options);
+                options: options
+            );
             secondary.TryAcquireOrNotify(TestContext.Current.CancellationToken);
         }, TestContext.Current.CancellationToken);
 
@@ -286,7 +298,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
                 }
                 secondMessageTcs.TrySetResult(msg);
                 return ValueTask.CompletedTask;
-            });
+            }
+        );
 
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
@@ -378,7 +391,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
                 exceptionSeen.TrySetResult(ex);
                 return false; // terminate
             },
-            options: options);
+            options: options
+        );
 
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
@@ -456,7 +470,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         var primary = CreateLock(
             appId,
             createMsg: () => "x",
-            onOtherInstance: _ => ValueTask.CompletedTask);
+            onOtherInstance: _ => ValueTask.CompletedTask
+        );
 
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
@@ -478,7 +493,8 @@ public sealed class IpcCommunicationTests : IntegrationTestBase
         var primary = CreateLock(
             appId,
             createMsg: () => "x",
-            onOtherInstance: _ => ValueTask.CompletedTask);
+            onOtherInstance: _ => ValueTask.CompletedTask
+        );
 
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 

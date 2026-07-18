@@ -86,7 +86,7 @@ var options = new InstanceLockOptions
         RetryAttempts: retryAttempts,
         MaxJitterDelay: TimeSpan.FromMilliseconds(retryDelayMs),
         ConnectionTimeout: TimeSpan.FromSeconds(2)
-    )
+    ),
 };
 
 #pragma warning disable CA2000
@@ -118,7 +118,8 @@ using var instanceLock = new InstanceLock<string>(
     onOtherInstanceOpened: onOtherInstance,
     onServerException: null,
     loggerFactory: null,
-    options: options);
+    options: options
+);
 
 if (instanceLock.TryAcquireOrNotify())
 {

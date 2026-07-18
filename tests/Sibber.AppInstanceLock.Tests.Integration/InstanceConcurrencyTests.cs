@@ -8,7 +8,6 @@ namespace Sibber.AppInstanceLock.Tests.Integration;
 
 public sealed class InstanceConcurrencyTests : IntegrationTestBase
 {
-
     // ──────────────────────────────────────────────────────────────────────
     // INVARIANT: Single Instance Exclusivity
     // "Only one entity can successfully return true from TryAcquirePrimary()

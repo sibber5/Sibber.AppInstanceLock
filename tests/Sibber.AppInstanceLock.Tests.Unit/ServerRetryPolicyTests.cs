@@ -40,7 +40,7 @@ public sealed class ServerRetryPolicyTests : UnitTestBase
                 BaseDelay: TimeSpan.FromMilliseconds(baseDelayMs),
                 MaxDelay: TimeSpan.FromMilliseconds(maxDelayMs),
                 MaxRetries: maxRetries
-            )
+            ),
         };
 
         using var backend = new MockBackendLock(options);
@@ -52,7 +52,8 @@ public sealed class ServerRetryPolicyTests : UnitTestBase
         await backend.RunServerLoop(
             onMessage: _ => ValueTask.CompletedTask,
             onException: null,
-            ct: TestContext.Current.CancellationToken);
+            ct: TestContext.Current.CancellationToken
+        );
 
         sw.Stop();
 

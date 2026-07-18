@@ -8,7 +8,6 @@ namespace Sibber.AppInstanceLock.Tests.Integration;
 
 public sealed class ScopeBoundaryTests : IntegrationTestBase
 {
-
     // ──────────────────────────────────────────────────────────────────────
     // INVARIANT: Scope isolation (same-user, same-session, same-machine)
     // All three scopes within the same process produce distinct lock names.
@@ -27,13 +26,13 @@ public sealed class ScopeBoundaryTests : IntegrationTestBase
         primary.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
     }
 
-    [Theory]
     [InlineData(InstanceLockScope.Session, InstanceLockScope.User)]
     [InlineData(InstanceLockScope.Session, InstanceLockScope.Machine)]
     [InlineData(InstanceLockScope.User, InstanceLockScope.Session)]
     [InlineData(InstanceLockScope.User, InstanceLockScope.Machine)]
     [InlineData(InstanceLockScope.Machine, InstanceLockScope.Session)]
     [InlineData(InstanceLockScope.Machine, InstanceLockScope.User)]
+    [Theory]
     public void TryAcquire_DifferentScopes_AllCombinations_AreIndependent(InstanceLockScope first, InstanceLockScope second)
     {
         var appId = UniqueAppId();
@@ -45,10 +44,10 @@ public sealed class ScopeBoundaryTests : IntegrationTestBase
         lock2.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
     }
 
-    [Theory]
     [InlineData(InstanceLockScope.Session)]
     [InlineData(InstanceLockScope.User)]
     [InlineData(InstanceLockScope.Machine)]
+    [Theory]
     public void TryAcquire_SameScope_WhileMultipleOtherScopesExist_Fails(InstanceLockScope targetScope)
     {
         var appId = UniqueAppId();

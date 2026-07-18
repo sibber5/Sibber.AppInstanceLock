@@ -8,7 +8,6 @@ namespace Sibber.AppInstanceLock.Tests.Unit;
 
 public sealed class StateIdempotencyTests : UnitTestBase
 {
-
     [Fact]
     public void TryAcquire_SubsequentCallOnPrimary_ReturnsTrue()
     {

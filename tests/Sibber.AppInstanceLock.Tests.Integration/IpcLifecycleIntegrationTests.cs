@@ -16,7 +16,6 @@ namespace Sibber.AppInstanceLock.Tests.Integration;
 /// </summary>
 public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
 {
-
     [Fact]
     public async Task Lifecycle_Deterministic_CreateStartDispose()
     {
@@ -34,7 +33,9 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         await Task.Run(async () =>
         {
             while (Volatile.Read(ref backend._pipeCts) == null)
+            {
                 await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
         }, TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         backend._pipeCts.ShouldNotBeNull();
@@ -126,7 +127,9 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         await Task.Run(async () =>
         {
             while (Volatile.Read(ref backend._pipeCts) == null)
+            {
                 await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
         }, TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         // Cancel the pipe to force the server loop to exit and hit the cleanup finally block
@@ -180,7 +183,9 @@ public sealed class IpcLifecycleIntegrationTests : IntegrationTestBase
         await Task.Run(async () =>
         {
             while ((Volatile.Read(ref backend._pipeCts) == null || Volatile.Read(ref executingThreads) < numThreads) && !TestContext.Current.CancellationToken.IsCancellationRequested)
+            {
                 await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
         }, TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         // Cancel the created CTS so the primary loop exits

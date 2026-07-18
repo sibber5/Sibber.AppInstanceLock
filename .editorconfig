@@ -310,6 +310,9 @@ dotnet_diagnostic.IDE0045.severity = suggestion
 # IDE0046: Use conditional expression for return
 dotnet_diagnostic.IDE0046.severity = suggestion
 
+# IDE0022: Use expression body for method
+dotnet_diagnostic.IDE0022.severity = suggestion
+
 # CA1873: Avoid potentially expensive logging
 dotnet_diagnostic.CA1873.severity = suggestion
 

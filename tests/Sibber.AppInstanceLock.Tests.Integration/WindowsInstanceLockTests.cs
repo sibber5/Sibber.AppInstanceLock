@@ -288,7 +288,8 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
                 PipeDirection.In,
                 1,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous);
+                PipeOptions.Asynchronous
+            );
             hijackPipe.Dispose();
         });
     }
@@ -364,8 +365,7 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         var t = new Thread(() =>
         {
             var security = new MutexSecurity();
-            security.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(GetUserId()), MutexRights.FullControl,
-                AccessControlType.Allow));
+            security.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(GetUserId()), MutexRights.FullControl, AccessControlType.Allow));
 
             // Create and acquire ownership
             var mutex = MutexAcl.Create(true, mutexName, out _, security);
