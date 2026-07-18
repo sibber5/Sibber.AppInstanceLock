@@ -7,10 +7,10 @@
 using System.Runtime.Versioning;
 using Microsoft.Extensions.Logging;
 using Meziantou.Extensions.Logging.Xunit.v3;
+using System.Diagnostics.CodeAnalysis;
 
-#pragma warning disable CA1716 // Identifiers should not match keywords ('Shared' is only a visual basic keyword so who cares)
+[assembly: SuppressMessage("Naming", "CA1716:Identifiers should not match keywords", Scope = "namespace", Target = "~N:Sibber.AppInstanceLock.Tests.Shared")]
 namespace Sibber.AppInstanceLock.Tests.Shared;
-#pragma warning restore CA1716
 
 #pragma warning disable CA1063 // Implement IDisposable Correctly
 #pragma warning disable CA1816 // Dispose methods should call SuppressFinalize

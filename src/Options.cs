@@ -41,6 +41,11 @@ public sealed record InstanceLockOptions
     public InstanceLockScope Scope { get; init; } = InstanceLockScope.Session;
 
     /// <summary>
+    /// Configures the time provider used for elapsed time measurement and asynchronous delays.
+    /// </summary>
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+
+    /// <summary>
     /// Configures the retry policy for attempts to notify the primary instance when another instance tries to acquire the lock.
     /// </summary>
     public NotificationRetryPolicy NotificationRetryPolicy { get; init; } = new(RetryAttempts: 4, MaxJitterDelay: TimeSpan.FromMilliseconds(300), ConnectionTimeout: TimeSpan.FromMilliseconds(1500));

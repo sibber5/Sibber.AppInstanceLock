@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Meziantou.Extensions.Logging.Xunit.v3" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="xunit.v3.extensibility.core" />
   </ItemGroup>
 
 </Project>

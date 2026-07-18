@@ -4,64 +4,67 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+using System.Security.AccessControl;
+using System.Security.Principal;
+using Sibber.AppInstanceLock.Tests.Shared;
+
 namespace Sibber.AppInstanceLock.Tests.Unit;
 
 public sealed class ExceptionMappingTests : UnitTestBase
 {
-    [Fact]
-    public void CrossPlatformExceptionMapping_AccessDenied()
+    [WindowsFact]
+    public void Windows_ExceptionMapping_AccessDenied()
     {
-        if (OperatingSystem.IsLinux() && Environment.UserName == "root")
+        var appId = UniqueAppId();
+        var mutexName = @$"Local\{appId}";
+        var security = new MutexSecurity();
+        using var wid = WindowsIdentity.GetCurrent();
+        var rule = new MutexAccessRule(wid.User!, MutexRights.FullControl, AccessControlType.Deny);
+        security.AddAccessRule(rule);
+
+        using var m = MutexAcl.Create(false, mutexName, out var _, security);
+        var options = new InstanceLockOptions { Scope = InstanceLockScope.Session };
+        using var inst = new WindowsInstanceLock<string>(appId, options, null);
+        Should.Throw<UnauthorizedAccessException>(() => inst.TryAcquirePrimary());
+    }
+
+    [UnixFact]
+    public void Unix_ExceptionMapping_AccessDenied()
+    {
+        // linux runners on GitHub Actions execute as root.
+        if (Environment.UserName == "root")
         {
-            // GitHub Actions CI Note: Linux runners execute as root, bypassing standard Unix file permission restrictions.
             Assert.Skip("Test is running as root, this bypasses standard Unix file permission restrictions which makes the test pointless.");
         }
 
         var appId = UniqueAppId();
+        var options = new InstanceLockOptions { Scope = InstanceLockScope.User };
+        using var inst = new UnixInstanceLock<string>(appId, options, null);
+        var tempPath = inst._lockFilePath;
 
-        if (OperatingSystem.IsWindows())
+        var parentDir = Path.GetDirectoryName(tempPath);
+        if (!string.IsNullOrEmpty(parentDir))
         {
-            var mutexName = @$"Local\{appId}";
-            var security = new System.Security.AccessControl.MutexSecurity();
-            var wid = System.Security.Principal.WindowsIdentity.GetCurrent();
-            var rule = new System.Security.AccessControl.MutexAccessRule(wid.User!, System.Security.AccessControl.MutexRights.FullControl, System.Security.AccessControl.AccessControlType.Deny);
-            security.AddAccessRule(rule);
+            Directory.CreateDirectory(parentDir);
+        }
 
-            using var m = MutexAcl.Create(false, mutexName, out var _, security);
-            var options = new InstanceLockOptions { Scope = InstanceLockScope.Session };
-            using var inst = new WindowsInstanceLock<string>(appId, options, null);
+        File.WriteAllText(tempPath, "lock");
+        File.SetUnixFileMode(tempPath, UnixFileMode.None); // no access
+
+        try
+        {
             Should.Throw<UnauthorizedAccessException>(() => inst.TryAcquirePrimary());
         }
-        else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+        finally
         {
-            var options = new InstanceLockOptions { Scope = InstanceLockScope.User };
-            using var inst = new UnixInstanceLock<string>(appId, options, null);
-            var tempPath = inst._lockFilePath;
-
-            var parentDir = Path.GetDirectoryName(tempPath);
-            if (!string.IsNullOrEmpty(parentDir))
-            {
-                Directory.CreateDirectory(parentDir);
-            }
-
-            File.WriteAllText(tempPath, "lock");
-            File.SetUnixFileMode(tempPath, UnixFileMode.None); // no access
-
             try
             {
-                Should.Throw<UnauthorizedAccessException>(() => inst.TryAcquirePrimary());
+                File.SetUnixFileMode(tempPath, UnixFileMode.UserWrite | UnixFileMode.UserRead);
+                File.Delete(tempPath);
             }
-            finally
+            catch
             {
-                try
-                {
-                    File.SetUnixFileMode(tempPath, UnixFileMode.UserWrite | UnixFileMode.UserRead);
-                    File.Delete(tempPath);
-                }
-                catch
-                {
-                    // Ignore cleanup failure to not mask the main failure
-                }
+                // Ignore cleanup failure to not mask the main failure
             }
         }
     }

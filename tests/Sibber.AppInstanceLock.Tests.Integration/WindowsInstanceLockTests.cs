@@ -9,6 +9,7 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using Microsoft.Extensions.Logging.Abstractions;
+using Sibber.AppInstanceLock.Tests.Shared;
 
 namespace Sibber.AppInstanceLock.Tests.Integration;
 
@@ -22,13 +23,11 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         return id.User!.Value;
     }
 
-    [Theory]
+    [WindowsTheory]
     [InlineData(InstanceLockScope.User)]
     [InlineData(InstanceLockScope.Session)]
     public void Mutex_UserAndSessionScope_AllowsCurrentSessionUser(InstanceLockScope scope)
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var appId = UniqueAppId();
         var options = new InstanceLockOptions { Scope = scope };
 
@@ -41,13 +40,11 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         mutex?.Dispose();
     }
 
-    [Theory]
+    [WindowsTheory]
     [InlineData(InstanceLockScope.User)]
     [InlineData(InstanceLockScope.Session)]
     public void Mutex_UserAndSessionScope_DisallowsOtherUsers(InstanceLockScope scope)
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var appId = UniqueAppId();
         var options = new InstanceLockOptions { Scope = scope };
 
@@ -91,11 +88,9 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         }
     }
 
-    [Fact]
+    [WindowsFact]
     public void Mutex_MachineScope_AllowsAuthenticatedUsers()
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var appId = UniqueAppId();
         var options = new InstanceLockOptions { Scope = InstanceLockScope.Machine };
 
@@ -152,13 +147,11 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         return instanceLock;
     }
 
-    [Theory]
+    [WindowsTheory]
     [InlineData(InstanceLockScope.User)]
     [InlineData(InstanceLockScope.Session)]
     public async Task Pipe_UserAndSessionScope_AllowsCurrentSessionUser(InstanceLockScope scope)
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var appId = UniqueAppId();
         using var instanceLock = StartPipeServer(appId, scope);
 
@@ -168,13 +161,11 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         clientPipe.IsConnected.ShouldBeTrue("The Named Pipe should allow the current user to connect");
     }
 
-    [Theory]
+    [WindowsTheory]
     [InlineData(InstanceLockScope.User)]
     [InlineData(InstanceLockScope.Session)]
     public async Task Pipe_UserAndSessionScope_DisallowsOtherUsers(InstanceLockScope scope)
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var appId = UniqueAppId();
         using var instanceLock = StartPipeServer(appId, scope);
 
@@ -212,11 +203,9 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         foundSystem.ShouldBeTrue("LocalSystem should have FullControl");
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Pipe_MachineScope_AllowsAuthenticatedUsers()
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var appId = UniqueAppId();
         using var instanceLock = StartPipeServer(appId, InstanceLockScope.Machine);
 
@@ -255,11 +244,9 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         foundSystem.ShouldBeTrue("LocalSystem should have FullControl in Machine scope");
     }
 
-    [Fact]
+    [WindowsFact]
     public void WindowsInstanceLock_ThrowsOnInvalidScope()
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var invalidScope = (InstanceLockScope)999;
         var options = new InstanceLockOptions { Scope = invalidScope };
 
@@ -268,11 +255,9 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         Should.Throw<NotSupportedException>(() => WindowsInstanceLock<string>.CreateMutexName("test", invalidScope));
     }
 
-    [Fact]
+    [WindowsFact]
     public void Pipe_Hijacking_IsPrevented_By_MaxInstances()
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var appId = UniqueAppId();
         var scope = InstanceLockScope.User;
 
@@ -294,11 +279,9 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         });
     }
 
-    [Fact]
+    [WindowsFact]
     public void Mutex_TryAcquirePrimary_FallsBackToOpenExisting_WhenCreateFails()
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var appId = UniqueAppId();
         var mutexName = WindowsInstanceLock<string>.CreateMutexName(appId, InstanceLockScope.User);
 
@@ -311,11 +294,9 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         instanceLock.TryAcquirePrimary().ShouldBeFalse("TryAcquirePrimary should return false because existingMutex already owns the mutex");
     }
 
-    [Fact]
+    [WindowsFact]
     public void Mutex_TryAcquirePrimary_HandlesAbandonedMutexException()
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var appId = UniqueAppId();
         var mutexName = WindowsInstanceLock<string>.CreateMutexName(appId, InstanceLockScope.User);
 
@@ -329,11 +310,9 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         instanceLock.TryAcquirePrimary().ShouldBeTrue("TryAcquirePrimary should catch AbandonedMutexException and acquire ownership");
     }
 
-    [Fact]
+    [WindowsFact]
     public void TryAcquirePrimary_WhenMutexCreationAndOpenFail_ThrowsUnauthorizedAccessException()
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var appId = UniqueAppId();
         var options = new InstanceLockOptions { Scope = InstanceLockScope.User };
         var mutexName = $@"Global\{appId}_user_{GetUserId()}";
@@ -349,11 +328,9 @@ public sealed class WindowsInstanceLockTests : IntegrationTestBase
         Should.Throw<UnauthorizedAccessException>(() => instanceLock.TryAcquirePrimary());
     }
 
-    [Fact]
+    [WindowsFact]
     public void TryAcquirePrimary_WhenPreviousPrimaryCrashedButHandleStillOpen_AcquiresSuccessfully()
     {
-        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows only");
-
         var appId = UniqueAppId();
         var options = new InstanceLockOptions { Scope = InstanceLockScope.User };
         var mutexName = $@"Global\{appId}_user_{GetUserId()}";

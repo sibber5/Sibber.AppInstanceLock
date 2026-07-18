@@ -125,7 +125,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
             {
                 while (!ct.IsCancellationRequested)
                 {
-                    var startTime = Stopwatch.GetTimestamp();
+                    var startTime = _options.TimeProvider.GetTimestamp();
                     try
                     {
                         await RunLoop(ct).ConfigureAwait(false);
@@ -136,7 +136,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
                         Debug.Assert(attempt >= 0);
                         var retryPolicy = _options.InstanceServerRetryPolicy;
-                        var uptime = Stopwatch.GetElapsedTime(startTime);
+                        var uptime = _options.TimeProvider.GetElapsedTime(startTime);
 
                         if (uptime >= retryPolicy.MinimumUptime)
                         {
@@ -170,7 +170,7 @@ internal abstract class InstanceLockImpl<TMessage>(string pipeName, InstanceLock
 
                         try
                         {
-                            await Task.Delay(delay, ct).ConfigureAwait(false);
+                            await Task.Delay(delay, _options.TimeProvider, ct).ConfigureAwait(false);
                         }
                         catch (OperationCanceledException) { break; }
                     }

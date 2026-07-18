@@ -102,7 +102,14 @@ public sealed class StateIdempotencyTests : UnitTestBase
             return true;
         });
 
-        primary._backend.OnServerReady = () => serverReadySem.Release();
+        primary._backend.OnServerReady = () =>
+        {
+            try
+            {
+                serverReadySem.Release();
+            }
+            catch (ObjectDisposedException) { }
+        };
         primary.TryAcquireOrNotify(TestContext.Current.CancellationToken).ShouldBeTrue();
 
         // Wait for primary server loop to actually start before connecting with secondary

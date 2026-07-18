@@ -26,7 +26,7 @@ internal static class WindowsInstanceLockHooks
 [SupportedOSPlatform("windows")]
 internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
 {
-    private readonly string _mutexName;
+    internal readonly string _mutexName;
 
     private Mutex? _mutex;
     private bool _ownsMutex;
