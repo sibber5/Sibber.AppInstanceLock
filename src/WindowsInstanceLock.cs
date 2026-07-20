@@ -62,7 +62,7 @@ internal sealed class WindowsInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     {
         InstanceLockScope.Machine => @$"Global\{appId}",
         InstanceLockScope.User => @$"Global\{appId}_user_{HashIfTooLong(GetUserId())}",
-        InstanceLockScope.Session => @$"Local\{appId}",
+        InstanceLockScope.Session => @$"Local\{appId}_session_{GetSessionId()}",
         _ => throw new NotSupportedException($"{scope} is not a supported scope."),
     };
 

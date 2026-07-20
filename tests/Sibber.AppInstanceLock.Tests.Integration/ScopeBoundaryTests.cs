@@ -60,4 +60,88 @@ public sealed class ScopeBoundaryTests : IntegrationTestBase
         var duplicate = CreateLock<string>(appId, options: new() { Scope = targetScope });
         duplicate.TryAcquire(TestContext.Current.CancellationToken).ShouldBeFalse();
     }
+
+    [Fact]
+    public void TryAcquire_SessionScope_DifferentSessions_AreIndependent()
+    {
+        var appId = UniqueAppId();
+
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                WindowsInstanceLockHooks._sessionIdHook.Value = () => 100;
+            }
+            else
+            {
+                UnixInstanceLockHooks._sessionIdHook.Value = () => "session-100";
+            }
+            var session1 = CreateLock<string>(appId, options: new() { Scope = InstanceLockScope.Session });
+            session1.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
+
+            if (OperatingSystem.IsWindows())
+            {
+                WindowsInstanceLockHooks._sessionIdHook.Value = () => 200;
+            }
+            else
+            {
+                UnixInstanceLockHooks._sessionIdHook.Value = () => "session-200";
+            }
+            var session2 = CreateLock<string>(appId, options: new() { Scope = InstanceLockScope.Session });
+            session2.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
+        }
+        finally
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                WindowsInstanceLockHooks._sessionIdHook.Value = null;
+            }
+            else
+            {
+                UnixInstanceLockHooks._sessionIdHook.Value = null;
+            }
+        }
+    }
+
+    [Fact]
+    public void TryAcquire_UserScope_DifferentUsers_AreIndependent()
+    {
+        var appId = UniqueAppId();
+
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                WindowsInstanceLockHooks._userIdHook.Value = () => "S-1-5-21-1234567890-1234567890-1234567890-1001";
+            }
+            else
+            {
+                UnixInstanceLockHooks._userIdHook.Value = () => 1001;
+            }
+            var user1 = CreateLock<string>(appId, options: new() { Scope = InstanceLockScope.User });
+            user1.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
+
+            if (OperatingSystem.IsWindows())
+            {
+                WindowsInstanceLockHooks._userIdHook.Value = () => "S-1-5-21-1234567890-1234567890-1234567890-1002";
+            }
+            else
+            {
+                UnixInstanceLockHooks._userIdHook.Value = () => 1002;
+            }
+            var user2 = CreateLock<string>(appId, options: new() { Scope = InstanceLockScope.User });
+            user2.TryAcquire(TestContext.Current.CancellationToken).ShouldBeTrue();
+        }
+        finally
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                WindowsInstanceLockHooks._userIdHook.Value = null;
+            }
+            else
+            {
+                UnixInstanceLockHooks._userIdHook.Value = null;
+            }
+        }
+    }
 }
