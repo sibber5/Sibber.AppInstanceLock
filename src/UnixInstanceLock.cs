@@ -21,6 +21,7 @@ namespace Sibber.AppInstanceLock;
 internal static class UnixInstanceLockHooks
 {
     internal static readonly AsyncLocal<Func<uint>?> _userIdHook = new();
+    internal static readonly AsyncLocal<Func<string>?> _sessionIdHook = new();
 }
 #endif
 
@@ -82,8 +83,117 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     /// <exception cref="PlatformNotSupportedException">Getting the folder path of the user profile special folder is not supported on the current platform.</exception>
     private static string ChooseLockFilePath(string appId, InstanceLockScope scope, ILogger? logger)
     {
-        // Session scope: use XDG_RUNTIME_DIR or /run/user/{uid}; fall back to /tmp with session id.
         if (scope is InstanceLockScope.Session)
+        {
+            if (OperatingSystem.IsLinux() && TryGetXdgRuntimeDir(out var xdg, logger))
+            {
+                return Path.Combine(xdg, $"{appId}_session_{GetSessionId()}.lock");
+            }
+
+            return Path.Combine(Path.GetTempPath(), $"{appId}_user_{getuid()}_session_{GetSessionId()}.lock");
+        }
+        else if (scope is InstanceLockScope.User)
+        {
+            // Append the UID to the filename to guarantee isolation even if environment variables
+            // (like XDG_RUNTIME_DIR or HOME) leak across users (e.g., via sudo or in tests).
+            var fileName = $"{appId}_user_{getuid()}.lock";
+
+            if (OperatingSystem.IsLinux() && TryGetXdgRuntimeDir(out var xdg, logger))
+            {
+                return Path.Combine(xdg, fileName);
+            }
+
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrEmpty(home))
+            {
+                if (OperatingSystem.IsMacOS())
+                {
+                    var macPath = Path.Combine(home, "Library", "Application Support", appId);
+                    try
+                    {
+                        Directory.CreateDirectory(macPath);
+                        return Path.Combine(macPath, fileName);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger?.LogWarning(ex, "Failed to create lock directory at '{Dir}'. Falling back to {FallbackDir}...", macPath, "NSTemporaryDirectory()");
+                    }
+                }
+                else if (OperatingSystem.IsLinux())
+                {
+                    var stateHome = Environment.GetEnvironmentVariable("XDG_STATE_HOME");
+                    if (string.IsNullOrEmpty(stateHome))
+                    {
+                        stateHome = Path.Combine(home, ".local", "state");
+                    }
+
+                    var stateDir = Path.Combine(stateHome, appId);
+                    try
+                    {
+                        Directory.CreateDirectory(stateDir);
+                        return Path.Combine(stateDir, fileName);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger?.LogWarning(ex, "Failed to create lock directory at '{Dir}'. Falling back to {FallbackDir}...", stateDir, "XDG_DATA_HOME");
+                    }
+
+                    var dataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+                    if (string.IsNullOrEmpty(dataHome))
+                    {
+                        dataHome = Path.Combine(home, ".local", "share");
+                    }
+
+                    var dataDir = Path.Combine(dataHome, appId);
+                    try
+                    {
+                        Directory.CreateDirectory(dataDir);
+                        return Path.Combine(dataDir, fileName);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger?.LogWarning(ex, "Failed to create lock directory at '{Dir}'. Falling back to {FallbackDir}...", dataDir, "/tmp/");
+                    }
+                }
+                else
+                {
+                    throw new UnreachableException($"Unexpected platform ({Environment.OSVersion.Platform}) in {nameof(ChooseLockFilePath)}.");
+                }
+            }
+
+            // If we couldn't use home, fallback to /tmp with UID prefix (less ideal).
+            return Path.Combine(Path.GetTempPath(), fileName);
+        }
+        else if (scope is InstanceLockScope.Machine)
+        {
+            // We do not use macOS's global '/Library/Application Support' because it requires root privileges
+            // to write to, which would cause an UnauthorizedAccessException for standard user applications.
+            // Instead, we first try '/var/lock' (the FHS standard for Linux system locks).
+            // If that is unavailable or restrictive (as is common on macOS), we fall back to the global '/tmp'.
+            // '/tmp' has the sticky bit (1777) set, allowing unprivileged users to create files while remaining
+            // globally visible across the entire machine.
+            const string SystemLockDir = "/var/lock";
+            try
+            {
+                if (Directory.Exists(SystemLockDir))
+                {
+                    return Path.Combine(SystemLockDir, $"{appId}.lock");
+                }
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "Failed to access lock directory at '{Dir}'. Falling back to {FallbackDir}...", SystemLockDir, "/tmp/");
+            }
+
+            // fallback to global /tmp
+            // DO NOT use Path.GetTempPath() here because on macOS that resolves to a user-specific
+            // directory (/var/folders/.../T/), which completely breaks machine-wide visibility.
+            return Path.Combine("/tmp", $"machine_{appId}.lock");
+        }
+
+        throw new UnreachableException($"Unexpected scope ({scope}) in {nameof(ChooseLockFilePath)}.");
+
+        static bool TryGetXdgRuntimeDir([NotNullWhen(true)] out string? dir, ILogger? logger)
         {
             var xdg = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
             if (!string.IsNullOrEmpty(xdg))
@@ -94,107 +204,37 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
                     // If the destination directory exists already the permissions should not be changed."
                     // - https://specifications.freedesktop.org/basedir/latest/
                     if (!Directory.Exists(xdg)) Directory.CreateDirectory(xdg, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-                    return Path.Combine(xdg, $"{appId}.lock");
+                    dir = xdg;
+                    return true;
                 }
                 catch (Exception ex)
                 {
-                    logger?.LogDebug(ex, "Failed to create or access XDG_RUNTIME_DIR at '{Path}'. Falling back...", xdg);
+                    logger?.LogWarning(ex, "Failed to create or access XDG_RUNTIME_DIR at '{Path}'. Falling back to accessing {FallbackDir}...", xdg, "/run/user/");
                 }
             }
 
+            // XDG_RUNTIME_DIR is often stripped in contexts like sudo, cron, or SSH without pam_systemd,
+            // even when the systemd-managed /run/user/{uid} directory actually exists and is the correct location.
+            // Unlike XDG_RUNTIME_DIR (which could be a custom path and falls under the generic XDG creation rule),
+            // we know this specific fallback is a system-managed tmpfs mount, so we only check if it exists.
             try
             {
                 var uid = getuid();
                 var runUser = $"/run/user/{uid}";
                 if (Directory.Exists(runUser))
                 {
-                    return Path.Combine(runUser, $"{appId}.lock");
+                    dir = runUser;
+                    return true;
                 }
             }
             catch (Exception ex)
             {
-                logger?.LogDebug(ex, "Failed to evaluate /run/user/ directory. Falling back...");
+                logger?.LogWarning(ex, "Failed to access /run/user/ directory. Falling back...");
             }
 
-            // fallback: /tmp with session id suffix
-            return Path.Combine(Path.GetTempPath(), $"{appId}_session_{GetSessionId()}.lock");
+            dir = null;
+            return false;
         }
-        // User scope: place lockfile in a location inside the user's home (shared across sessions).
-        else if (scope is InstanceLockScope.User)
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (!string.IsNullOrEmpty(home))
-            {
-                // Prefer ~/.local/share/<app> (common on Linux), or macOS Application Support.
-                if (OperatingSystem.IsMacOS())
-                {
-                    var macPath = Path.Combine(home, "Library", "Application Support", appId);
-                    try
-                    {
-                        Directory.CreateDirectory(macPath);
-                        return Path.Combine(macPath, $"{appId}.lock");
-                    }
-                    catch (Exception ex)
-                    {
-                        logger?.LogDebug(ex, "Failed to create lock directory at '{Path}'. Falling back...", macPath);
-                    }
-                }
-                else if (OperatingSystem.IsLinux())
-                {
-                    // Linux-ish: use ~/.local/share/<app>
-                    var localShare = Path.Combine(home, ".local", "share", appId);
-                    try
-                    {
-                        Directory.CreateDirectory(localShare);
-                        return Path.Combine(localShare, $"{appId}.lock");
-                    }
-                    catch (Exception ex)
-                    {
-                        logger?.LogDebug(ex, "Failed to create lock directory at '{Path}'. Falling back...", localShare);
-                    }
-
-                    // fallback to ~/.config/<app>
-                    var config = Path.Combine(home, ".config", appId);
-                    try
-                    {
-                        Directory.CreateDirectory(config);
-                        return Path.Combine(config, $"{appId}.lock");
-                    }
-                    catch (Exception ex)
-                    {
-                        logger?.LogDebug(ex, "Failed to create lock directory at '{Path}'. Falling back...", config);
-                    }
-                }
-                else
-                {
-                    throw new UnreachableException($"Unexpected platform ({Environment.OSVersion.Platform}) in {nameof(ChooseLockFilePath)}.");
-                }
-            }
-
-            // If we couldn't use home, fallback to /tmp with UID prefix (less ideal).
-            return Path.Combine(Path.GetTempPath(), $"{appId}_user_{getuid()}.lock");
-        }
-        // Machine scope: try a standard system lock dir, else /tmp with 'machine' prefix.
-        else if (scope is InstanceLockScope.Machine)
-        {
-            try
-            {
-                const string SystemLockDir = "/var/lock";
-                if (Directory.Exists(SystemLockDir))
-                {
-                    return Path.Combine(SystemLockDir, $"{appId}.lock");
-                }
-            }
-            catch
-            {
-                /* ignore */
-            }
-
-            // fallback to /tmp
-            return Path.Combine(Path.GetTempPath(), $"machine_{appId}.lock");
-        }
-
-        throw new UnreachableException($"Unexpected scope ({scope}) in {nameof(ChooseLockFilePath)}.");
     }
 
     /// <remarks></remarks>
@@ -350,6 +390,9 @@ internal sealed class UnixInstanceLock<TMessage> : InstanceLockImpl<TMessage>
     /// <exception cref="SecurityException">The caller is not authorized to retrieve the session ID.</exception>
     private static string GetSessionId()
     {
+#if INCLUDE_TEST_HOOKS
+        if (UnixInstanceLockHooks._sessionIdHook.Value is { } hook) return hook();
+#endif
         // Get the Login Session Identifier (Stable, Session-Specific)
         if (OperatingSystem.IsLinux())
         {
